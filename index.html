@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>シリアル読み取り - 発送検品</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js" onerror="window.__html5QrcodeLoadFailed = true;"></script>
 <style>
   :root {
     --ink: #12181f;
@@ -245,6 +245,38 @@
 
   #cam-error-detail.show-error {
     color: var(--warn);
+  }
+
+  .secondary-btn {
+    border: 1px solid var(--line) !important;
+    background: transparent !important;
+    color: var(--text-dim) !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    padding: 8px 16px !important;
+    border-radius: 20px !important;
+    margin-top: 4px;
+  }
+
+  .secondary-btn:active {
+    background: var(--panel-2) !important;
+  }
+
+  #diagnose-result {
+    font-size: 11px;
+    line-height: 1.8;
+    color: var(--text-dim);
+    max-width: 320px;
+    text-align: left;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 12px;
+    white-space: pre-wrap;
+  }
+
+  #diagnose-result:empty {
+    display: none;
   }
 
   .dup-toast {
@@ -539,6 +571,8 @@
     <div id="cam-start-overlay">
       <button id="btn-start-camera">カメラを起動する</button>
       <div id="cam-error-detail"></div>
+      <button id="btn-diagnose" class="secondary-btn">起動しない場合はこちら（診断）</button>
+      <div id="diagnose-result"></div>
     </div>
   </div>
 
@@ -929,6 +963,11 @@
   }
 
   function initCamera() {
+    if (window.__html5QrcodeLoadFailed || typeof Html5Qrcode === "undefined") {
+      setOverlayError("スキャンライブラリの読み込みに失敗しました。通信環境を確認し、ページを再読み込みしてください。");
+      return;
+    }
+
     var envError = checkEnvironment();
     if (envError) {
       setOverlayError(envError);
@@ -939,26 +978,57 @@
     elBtnStartCamera.disabled = true;
     elBtnStartCamera.textContent = "起動しています…";
 
-    if (!html5QrCode) {
-      html5QrCode = new Html5Qrcode("reader", { verbose: false });
+    // 一定時間経過してもコールバックが一切来ない場合の保険（無反応状態の検知）
+    var settled = false;
+    var timeoutId = setTimeout(function () {
+      if (settled) return;
+      settled = true;
+      elBtnStartCamera.disabled = false;
+      elBtnStartCamera.textContent = "カメラを起動する";
+      setOverlayError("カメラからの応答がありません。ブラウザのアドレスバー付近にカメラ権限のアイコンが出ていないか確認してください。表示されない場合は、ブラウザのサイト設定からこのページのカメラ権限を確認してください。");
+    }, 8000);
+
+    try {
+      if (!html5QrCode) {
+        html5QrCode = new Html5Qrcode("reader", { verbose: false });
+      }
+    } catch (initErr) {
+      clearTimeout(timeoutId);
+      elBtnStartCamera.disabled = false;
+      elBtnStartCamera.textContent = "カメラを起動する";
+      setOverlayError("スキャナーの初期化に失敗しました。（" + (initErr && initErr.message ? initErr.message : String(initErr)) + "）");
+      return;
     }
 
-    startCamera(cameraConstraintsPrimary)
-      .then(function () {
-        onCameraStarted();
-      })
-      .catch(function (err) {
-        // 高解像度制約付きで失敗した場合、facingModeのみでフォールバック
-        startCamera(cameraConstraintsFallback)
-          .then(function () {
-            onCameraStarted();
-          })
-          .catch(function (err2) {
-            elBtnStartCamera.disabled = false;
-            elBtnStartCamera.textContent = "カメラを起動する";
-            setOverlayError(describeStartError(err2));
-          });
+    var runStart = function (constraints, onAllFailed) {
+      var startPromise;
+      try {
+        startPromise = startCamera(constraints);
+      } catch (syncErr) {
+        onAllFailed(syncErr);
+        return;
+      }
+      startPromise
+        .then(function () {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeoutId);
+          onCameraStarted();
+        })
+        .catch(onAllFailed);
+    };
+
+    runStart(cameraConstraintsPrimary, function (err) {
+      // 高解像度制約付きで失敗した場合、facingModeのみでフォールバック
+      runStart(cameraConstraintsFallback, function (err2) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        elBtnStartCamera.disabled = false;
+        elBtnStartCamera.textContent = "カメラを起動する";
+        setOverlayError(describeStartError(err2));
       });
+    });
   }
 
   function onCameraStarted() {
@@ -972,6 +1042,36 @@
   elBtnStartCamera.addEventListener("click", function () {
     ensureAudioContext();
     initCamera();
+  });
+
+  // ===== 診断機能（ライブラリを介さず直接 getUserMedia を試す） =====
+  var elBtnDiagnose = document.getElementById("btn-diagnose");
+  var elDiagnoseResult = document.getElementById("diagnose-result");
+
+  elBtnDiagnose.addEventListener("click", function () {
+    var lines = [];
+    lines.push("URL: " + location.href);
+    lines.push("HTTPS判定: " + (window.isSecureContext ? "OK（安全なコンテキスト）" : "NG（保護されていない接続）"));
+    lines.push("mediaDevices対応: " + (navigator.mediaDevices ? "あり" : "なし"));
+    lines.push("getUserMedia対応: " + (navigator.mediaDevices && navigator.mediaDevices.getUserMedia ? "あり" : "なし"));
+    lines.push("Html5Qrcode読み込み: " + (typeof Html5Qrcode !== "undefined" ? "OK" : "失敗（CDNブロックの可能性）"));
+    lines.push("UA: " + navigator.userAgent);
+    elDiagnoseResult.textContent = lines.join("\n") + "\n\n直接カメラ許可を試しています…";
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      elDiagnoseResult.textContent += "\nこのブラウザではカメラAPIが使えません。";
+      return;
+    }
+
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } } })
+      .then(function (stream) {
+        elDiagnoseResult.textContent += "\n結果: カメラ権限のダイアログが表示され、許可されました。\nライブラリ側の問題の可能性があります。ページを再読み込みしてから「カメラを起動する」を再度お試しください。";
+        stream.getTracks().forEach(function (t) { t.stop(); });
+      })
+      .catch(function (err) {
+        var name = (err && err.name) || "UnknownError";
+        elDiagnoseResult.textContent += "\n結果: 直接アクセスも失敗しました。（" + name + "）\n" + describeStartError(err);
+      });
   });
 
   // ページ非表示時にカメラを一時停止（バッテリー節約・端末仕様上の安全策）
