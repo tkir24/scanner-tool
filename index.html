@@ -2,37 +2,175 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>出荷用スキャナー</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>出荷管理スキャナー</title>
     <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
     <style>
-        body { font-family: sans-serif; padding: 10px; max-width: 600px; margin: 0 auto; background-color: #f5f5f5; }
-        h2 { color: #333; text-align: center; font-size: 1.2em; }
-        #reader { width: 100%; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 15px; }
-        .control-panel { background: #fff; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        .stats { font-weight: bold; font-size: 1.2em; margin-bottom: 10px; color: #007bff; }
-        textarea { width: 100%; height: 150px; font-family: monospace; font-size: 1.1em; padding: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; resize: vertical; }
-        button { display: block; width: 100%; padding: 15px; margin-top: 10px; background-color: #28a745; color: white; border: none; border-radius: 4px; font-size: 1.1em; font-weight: bold; cursor: pointer; }
-        button:active { background-color: #218838; }
+        /* ネイティブアプリ風の洗練されたデザイン */
+        :root {
+            --primary: #007aff;
+            --danger: #ff3b30;
+            --bg: #f2f2f7;
+            --surface: #ffffff;
+            --text: #1c1c1e;
+            --border: #c6c6c8;
+        }
+        
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg); color: var(--text);
+            display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+        }
+
+        header {
+            background: var(--surface); padding: 16px; text-align: center;
+            font-size: 18px; font-weight: bold; border-bottom: 1px solid var(--border);
+            flex-shrink: 0; z-index: 10;
+        }
+
+        #camera-container {
+            width: 100%; background: #000; position: relative;
+            aspect-ratio: 4 / 3; display: flex; justify-content: center; align-items: center;
+            flex-shrink: 0; overflow: hidden;
+        }
+
+        /* ライブラリが自動生成する不要な要素を隠す */
+        #reader { width: 100%; height: 100%; border: none !important; }
+        #reader img { display: none !important; }
+
+        .overlay-button {
+            position: absolute; padding: 14px 24px; font-size: 16px; font-weight: bold;
+            background: var(--primary); color: white; border: none; border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3); cursor: pointer; z-index: 20;
+        }
+
+        .list-header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 12px 16px; background: var(--surface); border-bottom: 1px solid var(--border);
+            font-weight: bold; font-size: 15px; flex-shrink: 0;
+        }
+
+        .count-badge {
+            background: var(--primary); color: white; padding: 2px 8px;
+            border-radius: 12px; font-size: 14px;
+        }
+
+        /* スクロール可能な結果リスト */
+        #result-list {
+            flex-grow: 1; overflow-y: auto; background: var(--surface);
+            padding: 0 16px; -webkit-overflow-scrolling: touch;
+        }
+
+        .result-item {
+            padding: 14px 0; border-bottom: 1px solid var(--border);
+            font-family: SFMono-Regular, Consolas, monospace; font-size: 18px;
+            letter-spacing: 1px;
+            animation: fadeIn 0.3s ease-in-out;
+        }
+
+        @keyframes fadeIn { from { background-color: #e5f1ff; } to { background-color: transparent; } }
+
+        /* 下部の固定アクションボタン */
+        .action-bar {
+            display: flex; gap: 12px; padding: 16px;
+            background: var(--surface); border-top: 1px solid var(--border);
+            padding-bottom: env(safe-area-inset-bottom, 16px); flex-shrink: 0;
+        }
+
+        button.action-btn {
+            flex: 1; padding: 14px; font-size: 16px; font-weight: bold;
+            border: none; border-radius: 8px; color: white; cursor: pointer;
+        }
+        
+        .btn-copy { background: var(--primary); }
+        .btn-clear { background: var(--danger); }
+        button:active { filter: brightness(0.8); }
     </style>
 </head>
 <body>
 
-    <h2>出荷用QRスキャナー</h2>
-    <div id="reader"></div>
+    <header>出荷管理スキャナー</header>
 
-    <div class="control-panel">
-        <div class="stats">スキャン完了: <span id="count-display">0</span> 件</div>
-        <textarea id="output-area" readonly placeholder="スキャンしたシリアルナンバーがここに改行区切りで追加されます..."></textarea>
-        <button onclick="copyToClipboard()">リストを一括コピー</button>
+    <div id="camera-container">
+        <div id="reader"></div>
+        <button id="start-btn" class="overlay-button">カメラを起動</button>
+    </div>
+
+    <div class="list-header">
+        <span>スキャン済み</span>
+        <span class="count-badge"><span id="count-display">0</span> 件</span>
+    </div>
+
+    <div id="result-list">
+        </div>
+
+    <div class="action-bar">
+        <button class="action-btn btn-clear" onclick="clearList()">一括削除</button>
+        <button class="action-btn btn-copy" onclick="copyList()">一括コピー</button>
     </div>
 
     <script>
-        const outputArea = document.getElementById('output-area');
+        const resultList = document.getElementById('result-list');
         const countDisplay = document.getElementById('count-display');
-        const scannedSet = new Set(); 
+        const startBtn = document.getElementById('start-btn');
+        const scannedSet = new Set();
+        
+        let html5QrCode;
+        let audioContext;
 
-        function onScanSuccess(decodedText, decodedResult) {
+        // ビープ音の設定（Web Audio APIを使用するため音声ファイル不要）
+        function initAudio() {
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioContext.state === 'suspended') {
+                audioContext.resume();
+            }
+        }
+
+        function playBeep() {
+            if (!audioContext) return;
+            const osc = audioContext.createOscillator();
+            const gain = audioContext.createGain();
+            osc.connect(gain);
+            gain.connect(audioContext.destination);
+            
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(1200, audioContext.currentTime); // 高めの「ピッ」音
+            gain.gain.setValueAtTime(0.1, audioContext.currentTime);
+            
+            osc.start();
+            gain.gain.exponentialRampToValueAtTime(0.00001, audioContext.currentTime + 0.1);
+            osc.stop(audioContext.currentTime + 0.1);
+        }
+
+        // カメラ起動処理
+        startBtn.addEventListener('click', () => {
+            initAudio(); // ボタンタップ時に音声を許可状態にする
+            startBtn.style.display = 'none';
+
+            // ScannerではなくコアのHtml5Qrcodeを直接使用し、UIを完全排除
+            html5QrCode = new Html5Qrcode("reader");
+
+            // 背面カメラ(environment)を要求し、高解像度を指定して標準レンズを誘導
+            const config = { fps: 15, qrbox: { width: 250, height: 250 } };
+            const cameraConfig = { 
+                facingMode: "environment",
+                width: { ideal: 1920 },
+                height: { ideal: 1080 }
+            };
+
+            html5QrCode.start(cameraConfig, config, onScanSuccess)
+                .catch(err => {
+                    alert("カメラの起動に失敗しました。権限を確認してください。");
+                    startBtn.style.display = 'block';
+                });
+        });
+
+        // 読み取り成功時の処理
+        function onScanSuccess(decodedText) {
             const match = decodedText.trim().match(/(\d+)$/);
 
             if (match) {
@@ -41,40 +179,56 @@
                 if (!scannedSet.has(targetNumber)) {
                     scannedSet.add(targetNumber);
                     
-                    outputArea.value += (outputArea.value === "" ? "" : "\n") + targetNumber;
-                    countDisplay.textContent = scannedSet.size;
-                    outputArea.scrollTop = outputArea.scrollHeight;
+                    // リストの先頭に新しい項目を追加（スクロール不要で常に最新が見える）
+                    const item = document.createElement('div');
+                    item.className = 'result-item';
+                    item.textContent = targetNumber;
+                    resultList.prepend(item);
                     
-                    if (navigator.vibrate) {
-                        navigator.vibrate(100);
-                    }
+                    // 件数更新
+                    countDisplay.textContent = scannedSet.size;
+                    
+                    // ビープ音とバイブレーション
+                    playBeep();
+                    if (navigator.vibrate) navigator.vibrate(50);
                 }
             }
         }
 
-        function copyToClipboard() {
+        // 一括コピー機能
+        function copyList() {
             if (scannedSet.size === 0) {
                 alert("コピーするデータがありません。");
                 return;
             }
-            outputArea.select();
-            document.execCommand('copy');
-            alert(scannedSet.size + "件のシリアルナンバーをコピーしました。PCへ送信してください。");
+            // Setを改行区切りの文字列に変換
+            const textToCopy = Array.from(scannedSet).join('\n');
+            
+            // クリップボードにコピー
+            navigator.clipboard.writeText(textToCopy).then(() => {
+                alert(scannedSet.size + "件のデータをコピーしました。");
+            }).catch(err => {
+                // 古い端末用のフォールバック
+                const textArea = document.createElement("textarea");
+                textArea.value = textToCopy;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand("copy");
+                document.body.removeChild(textArea);
+                alert(scannedSet.size + "件のデータをコピーしました。");
+            });
         }
 
-        const config = {
-            fps: 15,
-            qrbox: { width: 250, height: 250 },
-            videoConstraints: {
-                facingMode: "environment",
-                width: { min: 640, ideal: 1280 },
-                height: { min: 480, ideal: 720 },
-                advanced: [{ focusMode: "continuous" }]
+        // 一括削除機能
+        function clearList() {
+            if (scannedSet.size === 0) return;
+            
+            if (confirm("スキャンしたリストをすべて削除しますか？")) {
+                scannedSet.clear();
+                resultList.innerHTML = '';
+                countDisplay.textContent = '0';
             }
-        };
-
-        const html5QrcodeScanner = new Html5QrcodeScanner("reader", config, false);
-        html5QrcodeScanner.render(onScanSuccess, undefined);
+        }
     </script>
 </body>
 </html>
