@@ -2,11 +2,10 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>出荷管理スキャナー</title>
     <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
     <style>
-        /*洗練されたデザイン */
         :root {
             --primary: #007aff;
             --danger: #ff3b30;
@@ -20,23 +19,23 @@
         
         body { 
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            background-color: var(--bg); color: var(--text);
-            display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+            background-color: var(--bg); 
+            color: var(--text);
+            /* スクロールと引っ張り更新を許可 */
+            padding-bottom: 90px; /* 固定した下部ボタンがリストに被らないよう余白を確保 */
         }
 
         header {
             background: var(--surface); padding: 16px; text-align: center;
             font-size: 18px; font-weight: bold; border-bottom: 1px solid var(--border);
-            flex-shrink: 0; z-index: 10;
         }
 
         #camera-container {
             width: 100%; background: #000; position: relative;
             aspect-ratio: 4 / 3; display: flex; justify-content: center; align-items: center;
-            flex-shrink: 0; overflow: hidden;
+            overflow: hidden;
         }
 
-        /* ライブラリが自動生成する不要な要素を隠す */
         #reader { width: 100%; height: 100%; border: none !important; }
         #reader img { display: none !important; }
 
@@ -49,7 +48,7 @@
         .list-header {
             display: flex; justify-content: space-between; align-items: center;
             padding: 12px 16px; background: var(--surface); border-bottom: 1px solid var(--border);
-            font-weight: bold; font-size: 15px; flex-shrink: 0;
+            font-weight: bold; font-size: 15px;
         }
 
         .count-badge {
@@ -57,10 +56,9 @@
             border-radius: 12px; font-size: 14px;
         }
 
-        /* スクロール可能な結果リスト */
         #result-list {
-            flex-grow: 1; overflow-y: auto; background: var(--surface);
-            padding: 0 16px; -webkit-overflow-scrolling: touch;
+            background: var(--surface);
+            padding: 0 16px;
         }
 
         .result-item {
@@ -72,11 +70,14 @@
 
         @keyframes fadeIn { from { background-color: #e5f1ff; } to { background-color: transparent; } }
 
-        /* 下部の固定アクションボタン */
+        /* 下部ボタンを画面に完全固定 */
         .action-bar {
+            position: fixed;
+            bottom: 0; left: 0; right: 0;
             display: flex; gap: 12px; padding: 16px;
             background: var(--surface); border-top: 1px solid var(--border);
-            padding-bottom: env(safe-area-inset-bottom, 16px); flex-shrink: 0;
+            padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+            z-index: 100;
         }
 
         button.action-btn {
@@ -103,8 +104,7 @@
         <span class="count-badge"><span id="count-display">0</span> 件</span>
     </div>
 
-    <div id="result-list">
-        </div>
+    <div id="result-list"></div>
 
     <div class="action-bar">
         <button class="action-btn btn-clear" onclick="clearList()">一括削除</button>
@@ -120,7 +120,6 @@
         let html5QrCode;
         let audioContext;
 
-        // ビープ音の設定（Web Audio APIを使用するため音声ファイル不要）
         function initAudio() {
             if (!audioContext) {
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -138,7 +137,7 @@
             gain.connect(audioContext.destination);
             
             osc.type = 'sine';
-            osc.frequency.setValueAtTime(1200, audioContext.currentTime); // 高めの「ピッ」音
+            osc.frequency.setValueAtTime(1200, audioContext.currentTime);
             gain.gain.setValueAtTime(0.1, audioContext.currentTime);
             
             osc.start();
@@ -232,4 +231,3 @@
     </script>
 </body>
 </html>
-
