@@ -222,6 +222,31 @@
     pointer-events: none;
   }
 
+  #cam-switch-bar {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 25;
+    display: none;
+  }
+
+  #cam-switch-bar.visible {
+    display: block;
+  }
+
+  #cam-select {
+    background: rgba(20, 26, 33, 0.9);
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 8px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    max-width: 46vw;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+
   #cam-start-overlay {
     position: absolute;
     inset: 0;
@@ -589,6 +614,9 @@
       </div>
     </div>
     <div id="cam-status"></div>
+    <div id="cam-switch-bar">
+      <select id="cam-select"></select>
+    </div>
     <div id="cam-start-overlay">
       <button id="btn-start-camera">カメラを起動する</button>
       <div id="cam-error-detail"></div>
@@ -909,7 +937,10 @@
       // QRコード（正方形）とバーコード（横長）の両方を安定して検出できるよう、
       // 走査枠は正方形に近い形にする。横長の枠だとQRコードが収まりきらず
       // 認識率が落ちるため。
-      var size = Math.floor(Math.min(viewfinderWidth, viewfinderHeight) * 0.78);
+      // viewfinderWidth/Height が起動直後で 0 の場合に備え、最小サイズを保証する。
+      var minSide = Math.min(viewfinderWidth || 0, viewfinderHeight || 0);
+      var size = minSide > 0 ? Math.floor(minSide * 0.78) : 250;
+      size = Math.max(size, 180);
       return { width: size, height: size };
     },
     disableFlip: false,
@@ -926,9 +957,9 @@
     ] : undefined)
   };
 
-  // 背面の標準広角カメラを優先させるため、videoConstraints に高解像度指定を付与する。
-  // これにより一部Android端末（Galaxy S23 FE等）で超広角カメラが誤って
-  // 選択される事象を回避しやすくする。
+  // 背面の標準レンズ（超広角ではない方）を優先させるため、videoConstraints に
+  // 高解像度指定を付与する。多くの端末では、超広角カメラは高解像度に対応して
+  // いないか、要求解像度で不利になるため、これにより標準レンズが選ばれやすくなる。
   // 注意: html5-qrcode の start() 第一引数（cameraIdOrConfig）はオブジェクトで渡す場合
   // キーを1つしか許容しないため、解像度指定は videoConstraints 側に含める。
   var qrConfigHighRes = Object.assign({}, qrConfig, {
@@ -942,6 +973,41 @@
   // cameraIdOrConfig は常に単一キーのオブジェクトにする
   var cameraConstraintsPrimary = { facingMode: { ideal: "environment" } };
   var cameraConstraintsFallback = { facingMode: "environment" };
+
+  var elCamSwitchBar = document.getElementById("cam-switch-bar");
+  var elCamSelect = document.getElementById("cam-select");
+  var availableCameras = [];
+  var currentCameraId = null;
+
+  // カメラのラベルから「超広角」らしさを判定する。
+  // 超広角レンズは ultra wide / 0.5x などの語を含むことが多く、
+  // 逆に標準レンズは wide のみ、または番号のみのことが多い。
+  function isLikelyUltraWide(label) {
+    if (!label) return false;
+    return /ultra[\s-]?wide|超広角|0\.5x|UW/i.test(label);
+  }
+
+  function isLikelyBackCamera(label) {
+    if (!label) return false;
+    return /back|rear|environment|背面/i.test(label);
+  }
+
+  // 起動に使う背面カメラを推定する。
+  // 超広角ラベルを避け、背面カメラの中で最もそれらしいものを選ぶ。
+  function pickBestBackCamera(devices) {
+    var backCams = devices.filter(function (d) {
+      return isLikelyBackCamera(d.label);
+    });
+    var candidates = backCams.length > 0 ? backCams : devices;
+
+    var nonUltraWide = candidates.filter(function (d) {
+      return !isLikelyUltraWide(d.label);
+    });
+    if (nonUltraWide.length > 0) {
+      return nonUltraWide[0];
+    }
+    return candidates[0];
+  }
 
   function setOverlayError(message) {
     elCamErrorDetail.textContent = message;
@@ -1067,7 +1133,6 @@
         if (typeof html5QrCode.isScanning === "boolean") {
           scanning = html5QrCode.isScanning;
         } else if (html5QrCode.getState) {
-          // getState() が使える場合、NOT_STARTED(=1) 以外は稼働中とみなす
           scanning = html5QrCode.getState() !== 1;
         }
         if (scanning) {
@@ -1078,42 +1143,7 @@
       next();
     };
 
-    // 複数の起動方式を順に試す。
-    // 1) facingMode + videoConstraints による高解像度指定（標準広角レンズ優先狙い）
-    // 2) facingMode のみのシンプルな指定
-    // 3) 背面カメラのdeviceIdを列挙して直接指定
     var errors = [];
-
-    var attemptFallback = function () {
-      resetBeforeRetry(function () {
-        runStart(cameraConstraintsFallback, qrConfig, function (err2) {
-          errors.push(stringifyError(err2));
-          resetBeforeRetry(attemptDeviceId);
-        });
-      });
-    };
-
-    var attemptDeviceId = function () {
-      Html5Qrcode.getCameras()
-        .then(function (devices) {
-          if (!devices || devices.length === 0) {
-            finishWithError(errors);
-            return;
-          }
-          var backCam = devices.find(function (d) {
-            return /back|rear|environment/i.test(d.label || "");
-          }) || devices[devices.length - 1];
-
-          runStart({ deviceId: { exact: backCam.id } }, qrConfig, function (err3) {
-            errors.push("[deviceId指定] " + stringifyError(err3));
-            finishWithError(errors);
-          });
-        })
-        .catch(function (err3) {
-          errors.push("[カメラ一覧取得] " + stringifyError(err3));
-          finishWithError(errors);
-        });
-    };
 
     var finishWithError = function (errList) {
       if (settled) return;
@@ -1125,10 +1155,114 @@
       setOverlayError(describeStartError(lastErr) + "\n\n[試行履歴]\n" + errList.join("\n"));
     };
 
-    runStart(cameraConstraintsPrimary, qrConfigHighRes, function (err1) {
-      errors.push(stringifyError(err1));
-      attemptFallback();
+    // facingMode 任せだと機種によって超広角レンズが選ばれることがあるため、
+    // 可能であれば先にカメラ一覧を取得し、超広角を避けたカメラを deviceId で
+    // 直接指定して起動する。取得できない、またはラベルが得られない端末
+    // （iPhone Safari 等）では facingMode 方式にフォールバックする。
+    var attemptFacingMode = function () {
+      runStart(cameraConstraintsPrimary, qrConfigHighRes, function (err1) {
+        errors.push(stringifyError(err1));
+        resetBeforeRetry(function () {
+          runStart(cameraConstraintsFallback, qrConfig, function (err2) {
+            errors.push(stringifyError(err2));
+            finishWithError(errors);
+          });
+        });
+      });
+    };
+
+    Html5Qrcode.getCameras()
+      .then(function (devices) {
+        if (!devices || devices.length === 0) {
+          attemptFacingMode();
+          return;
+        }
+
+        availableCameras = devices;
+        populateCameraSelect(devices);
+
+        var target = pickBestBackCamera(devices);
+        currentCameraId = target.id;
+        syncCameraSelectValue();
+
+        runStart({ deviceId: { exact: target.id } }, qrConfigHighRes, function (err1) {
+          errors.push("[deviceId優先起動] " + stringifyError(err1));
+          resetBeforeRetry(function () {
+            // 高解像度指定なしで同じデバイスを再試行
+            runStart({ deviceId: { exact: target.id } }, qrConfig, function (err2) {
+              errors.push("[deviceId標準起動] " + stringifyError(err2));
+              resetBeforeRetry(attemptFacingMode);
+            });
+          });
+        });
+      })
+      .catch(function (err) {
+        errors.push("[カメラ一覧取得] " + stringifyError(err));
+        attemptFacingMode();
+      });
+  }
+
+  // カメラ切り替えセレクタに一覧を反映する
+  function populateCameraSelect(devices) {
+    elCamSelect.innerHTML = "";
+    devices.forEach(function (d, idx) {
+      var opt = document.createElement("option");
+      opt.value = d.id;
+      var label = d.label || ("カメラ " + (idx + 1));
+      // 長いラベルは末尾を省略
+      if (label.length > 24) label = label.slice(0, 24) + "…";
+      opt.textContent = label;
+      elCamSelect.appendChild(opt);
     });
+    if (devices.length > 1) {
+      elCamSwitchBar.classList.add("visible");
+    }
+  }
+
+  function syncCameraSelectValue() {
+    if (currentCameraId) {
+      elCamSelect.value = currentCameraId;
+    }
+  }
+
+  // ユーザーがセレクタでカメラを切り替えたときの処理
+  elCamSelect.addEventListener("change", function () {
+    var newId = elCamSelect.value;
+    if (!newId || newId === currentCameraId || !html5QrCode) return;
+
+    var switchTo = function () {
+      runStartSimple({ deviceId: { exact: newId } })
+        .then(function () {
+          currentCameraId = newId;
+          elCamStatus.textContent = "";
+        })
+        .catch(function (err) {
+          showGlobalToast("カメラの切り替えに失敗しました");
+          syncCameraSelectValue();
+        });
+    };
+
+    try {
+      var scanning = (typeof html5QrCode.isScanning === "boolean")
+        ? html5QrCode.isScanning
+        : (html5QrCode.getState ? html5QrCode.getState() !== 1 : false);
+      if (scanning) {
+        html5QrCode.stop().then(switchTo).catch(switchTo);
+      } else {
+        switchTo();
+      }
+    } catch (e) {
+      switchTo();
+    }
+  });
+
+  // カメラ切り替え専用の単純な起動処理（一覧取得やフォールバック連鎖は行わない）
+  function runStartSimple(constraints) {
+    try {
+      return startCamera(constraints, qrConfigHighRes);
+    } catch (e) {
+      return Promise.reject(e);
+    }
   }
 
   function onCameraStarted() {
@@ -1165,8 +1299,21 @@
 
     navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } } })
       .then(function (stream) {
-        elDiagnoseResult.textContent += "\n結果: カメラ権限のダイアログが表示され、許可されました。\nライブラリ側の問題の可能性があります。ページを再読み込みしてから「カメラを起動する」を再度お試しください。";
+        elDiagnoseResult.textContent += "\n結果: カメラ権限のダイアログが表示され、許可されました。";
         stream.getTracks().forEach(function (t) { t.stop(); });
+
+        return Html5Qrcode.getCameras().then(function (devices) {
+          if (devices && devices.length > 0) {
+            var camLines = devices.map(function (d, i) {
+              return "  " + (i + 1) + ". " + (d.label || "(ラベル取得不可)");
+            });
+            elDiagnoseResult.textContent += "\n\n検出されたカメラ一覧:\n" + camLines.join("\n");
+          } else {
+            elDiagnoseResult.textContent += "\n\nカメラ一覧を取得できませんでした。";
+          }
+        }).catch(function () {
+          elDiagnoseResult.textContent += "\n\nカメラ一覧の取得に失敗しました。";
+        });
       })
       .catch(function (err) {
         var name = (err && err.name) || "UnknownError";
