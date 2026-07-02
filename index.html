@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>出荷用スキャナー</title>
+    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+    <style>
+        body { font-family: sans-serif; padding: 10px; max-width: 600px; margin: 0 auto; background-color: #f5f5f5; }
+        h2 { color: #333; text-align: center; font-size: 1.2em; }
+        #reader { width: 100%; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 15px; }
+        .control-panel { background: #fff; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .stats { font-weight: bold; font-size: 1.2em; margin-bottom: 10px; color: #007bff; }
+        textarea { width: 100%; height: 150px; font-family: monospace; font-size: 1.1em; padding: 10px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; resize: vertical; }
+        button { display: block; width: 100%; padding: 15px; margin-top: 10px; background-color: #28a745; color: white; border: none; border-radius: 4px; font-size: 1.1em; font-weight: bold; cursor: pointer; }
+        button:active { background-color: #218838; }
+    </style>
+</head>
+<body>
+
+    <h2>出荷用QRスキャナー</h2>
+    <div id="reader"></div>
+
+    <div class="control-panel">
+        <div class="stats">スキャン完了: <span id="count-display">0</span> 件</div>
+        <textarea id="output-area" readonly placeholder="スキャンしたシリアルナンバーがここに改行区切りで追加されます..."></textarea>
+        <button onclick="copyToClipboard()">リストを一括コピー</button>
+    </div>
+
+    <script>
+        const outputArea = document.getElementById('output-area');
+        const countDisplay = document.getElementById('count-display');
+        const scannedSet = new Set(); 
+
+        function onScanSuccess(decodedText, decodedResult) {
+            const match = decodedText.trim().match(/(\d+)$/);
+
+            if (match) {
+                const targetNumber = match[1];
+
+                if (!scannedSet.has(targetNumber)) {
+                    scannedSet.add(targetNumber);
+                    
+                    outputArea.value += (outputArea.value === "" ? "" : "\n") + targetNumber;
+                    countDisplay.textContent = scannedSet.size;
+                    outputArea.scrollTop = outputArea.scrollHeight;
+                    
+                    if (navigator.vibrate) {
+                        navigator.vibrate(100);
+                    }
+                }
+            }
+        }
+
+        function copyToClipboard() {
+            if (scannedSet.size === 0) {
+                alert("コピーするデータがありません。");
+                return;
+            }
+            outputArea.select();
+            document.execCommand('copy');
+            alert(scannedSet.size + "件のシリアルナンバーをコピーしました。PCへ送信してください。");
+        }
+
+        const config = {
+            fps: 15,
+            qrbox: { width: 250, height: 250 },
+            videoConstraints: {
+                facingMode: "environment",
+                width: { min: 640, ideal: 1280 },
+                height: { min: 480, ideal: 720 },
+                advanced: [{ focusMode: "continuous" }]
+            }
+        };
+
+        const html5QrcodeScanner = new Html5QrcodeScanner("reader", config, false);
+        html5QrcodeScanner.render(onScanSuccess, undefined);
+    </script>
+</body>
+</html>
