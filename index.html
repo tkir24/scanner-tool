@@ -203,20 +203,48 @@
     pointer-events: none;
   }
 
-  .flash-ok {
+  #cam-start-overlay {
     position: absolute;
     inset: 0;
-    background: rgba(47, 209, 143, 0.35);
-    z-index: 10;
-    opacity: 0;
-    pointer-events: none;
+    z-index: 30;
+    background: rgba(10, 14, 18, 0.92);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    padding: 24px;
+    text-align: center;
   }
-  .flash-ok.active {
-    animation: flashfade 0.35s ease-out;
+
+  #cam-start-overlay.hidden {
+    display: none;
   }
-  @keyframes flashfade {
-    0% { opacity: 1; }
-    100% { opacity: 0; }
+
+  #btn-start-camera {
+    border: none;
+    border-radius: 12px;
+    background: var(--accent-dim);
+    color: #fff;
+    font-size: 15px;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    padding: 14px 28px;
+  }
+
+  #btn-start-camera:active {
+    background: var(--accent);
+  }
+
+  #cam-error-detail {
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--text-dim);
+    max-width: 320px;
+  }
+
+  #cam-error-detail.show-error {
+    color: var(--warn);
   }
 
   .dup-toast {
@@ -285,10 +313,6 @@
     gap: 6px;
     padding-bottom: 20px;
   }
-  #empty-state .icon {
-    font-size: 28px;
-    opacity: 0.5;
-  }
   #empty-state .msg {
     font-size: 13px;
   }
@@ -336,13 +360,14 @@
 
   .item-row .del-btn {
     flex: 0 0 auto;
-    width: 30px;
+    width: 44px;
     height: 30px;
     border-radius: 8px;
     background: transparent;
     border: 1px solid var(--line);
     color: var(--text-dim);
-    font-size: 15px;
+    font-size: 12px;
+    font-weight: 700;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -396,10 +421,6 @@
 
   #btn-copy.copied {
     background: var(--accent);
-  }
-
-  #action-bar button .btn-icon {
-    font-size: 16px;
   }
 
   /* ===== モーダル（確認） ===== */
@@ -504,7 +525,6 @@
   <!-- カメラエリア -->
   <div id="scan-area">
     <div id="reader"></div>
-    <div class="flash-ok" id="flash-ok"></div>
     <div class="dup-toast" id="dup-toast">重複しています</div>
     <div class="scan-frame">
       <div class="scan-frame-box">
@@ -515,7 +535,11 @@
         <div class="scan-line"></div>
       </div>
     </div>
-    <div id="cam-status">カメラを起動しています…</div>
+    <div id="cam-status"></div>
+    <div id="cam-start-overlay">
+      <button id="btn-start-camera">カメラを起動する</button>
+      <div id="cam-error-detail"></div>
+    </div>
   </div>
 
   <!-- リストエリア -->
@@ -526,7 +550,6 @@
     </div>
     <div id="list-scroll">
       <div id="empty-state">
-        <div class="icon">📦</div>
         <div class="msg">スキャンするとここに追加されます</div>
       </div>
       <div id="list-items"></div>
@@ -536,11 +559,9 @@
   <!-- 固定アクションボタン -->
   <div id="action-bar">
     <button id="btn-clear">
-      <span class="btn-icon">🗑</span>
       <span>一括削除</span>
     </button>
     <button id="btn-copy">
-      <span class="btn-icon">📋</span>
       <span id="btn-copy-label">一括コピー</span>
     </button>
   </div>
@@ -575,7 +596,6 @@
   var elListItems = document.getElementById("list-items");
   var elEmptyState = document.getElementById("empty-state");
   var elListHeadingSub = document.getElementById("list-heading-sub");
-  var elFlashOk = document.getElementById("flash-ok");
   var elDupToast = document.getElementById("dup-toast");
   var elCamStatus = document.getElementById("cam-status");
   var elGlobalToast = document.getElementById("global-toast");
@@ -625,12 +645,6 @@
     osc.stop(ctx.currentTime + 0.17);
   }
 
-  function vibrate(pattern) {
-    if (navigator.vibrate) {
-      try { navigator.vibrate(pattern); } catch (e) {}
-    }
-  }
-
   // ===== 数値抽出（末尾の連続した数字） =====
   function extractSerial(rawText) {
     if (!rawText) return null;
@@ -662,7 +676,7 @@
         '<div class="item-row" data-serial="' + serial + '">' +
           '<div class="idx">' + displayIndex + '</div>' +
           '<div class="serial">' + escapeHtml(serial) + '</div>' +
-          '<button class="del-btn" data-action="delete-one" data-serial="' + serial + '">✕</button>' +
+          '<button class="del-btn" data-action="delete-one" data-serial="' + serial + '">削除</button>' +
         '</div>';
     }
     elListItems.innerHTML = html;
@@ -690,12 +704,6 @@
   }
 
   // ===== 一時演出 =====
-  function showFlash() {
-    elFlashOk.classList.remove("active");
-    void elFlashOk.offsetWidth;
-    elFlashOk.classList.add("active");
-  }
-
   function showDupToast() {
     elDupToast.classList.remove("show");
     void elDupToast.offsetWidth;
@@ -725,14 +733,12 @@
 
     if (!serial) {
       playErrorTone();
-      vibrate(80);
       showGlobalToast("数字を認識できませんでした");
       return;
     }
 
     if (serialSet.has(serial)) {
       playErrorTone();
-      vibrate([40, 40, 40]);
       showDupToast();
       return;
     }
@@ -742,8 +748,6 @@
     renderList();
 
     playBeep();
-    vibrate(60);
-    showFlash();
   }
 
   function onScanFailure() {
@@ -837,7 +841,12 @@
   }
 
   // ===== カメラ初期化（Html5Qrcode コアクラス） =====
-  var html5QrCode = new Html5Qrcode("reader", { verbose: false });
+  var html5QrCode = null;
+  var cameraStarted = false;
+
+  var elCamStartOverlay = document.getElementById("cam-start-overlay");
+  var elBtnStartCamera = document.getElementById("btn-start-camera");
+  var elCamErrorDetail = document.getElementById("cam-error-detail");
 
   var qrConfig = {
     fps: 12,
@@ -863,11 +872,35 @@
   // 背面の標準広角カメラを優先させるため、facingMode に加えて高解像度制約を付与する。
   // これにより一部Android端末（Galaxy S23 FE等）で超広角カメラが誤って
   // 選択される事象を回避しやすくする。
-  var cameraConstraints = {
+  var cameraConstraintsPrimary = {
     facingMode: { ideal: "environment" },
     width: { ideal: 1920 },
     height: { ideal: 1080 }
   };
+  var cameraConstraintsFallback = {
+    facingMode: { ideal: "environment" }
+  };
+
+  function setOverlayError(message) {
+    elCamErrorDetail.textContent = message;
+    elCamErrorDetail.classList.add("show-error");
+  }
+
+  function clearOverlayError() {
+    elCamErrorDetail.textContent = "";
+    elCamErrorDetail.classList.remove("show-error");
+  }
+
+  // 起動前の環境チェック。起動できない根本原因を切り分けて表示する。
+  function checkEnvironment() {
+    if (!window.isSecureContext) {
+      return "HTTPS（または localhost）でアクセスしてください。現在の接続では、ブラウザがカメラの利用を許可しません。";
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      return "この端末またはブラウザはカメラAPIに対応していません。Chrome または Safari の最新版でお試しください。";
+    }
+    return null;
+  }
 
   function startCamera(constraints) {
     return html5QrCode.start(
@@ -878,39 +911,72 @@
     );
   }
 
-  function initCamera() {
-    elCamStatus.textContent = "カメラを起動しています…";
+  function describeStartError(err) {
+    var msg = (err && (err.message || err.name || String(err))) || "";
+    if (/NotAllowedError|Permission denied|denied/i.test(msg)) {
+      return "カメラの利用が許可されていません。ブラウザのサイト設定でカメラを「許可」に変更し、再読み込みしてください。";
+    }
+    if (/NotFoundError|no camera/i.test(msg)) {
+      return "カメラが見つかりません。端末にカメラが搭載されているか確認してください。";
+    }
+    if (/NotReadableError|TrackStartError/i.test(msg)) {
+      return "カメラを他のアプリが使用中の可能性があります。他のカメラアプリを終了してから再度お試しください。";
+    }
+    if (/OverconstrainedError/i.test(msg)) {
+      return "指定した条件でカメラを起動できませんでした。標準設定で再試行します。";
+    }
+    return "カメラを起動できませんでした。ブラウザの権限設定を確認してください。（" + msg + "）";
+  }
 
-    startCamera(cameraConstraints)
+  function initCamera() {
+    var envError = checkEnvironment();
+    if (envError) {
+      setOverlayError(envError);
+      return;
+    }
+
+    clearOverlayError();
+    elBtnStartCamera.disabled = true;
+    elBtnStartCamera.textContent = "起動しています…";
+
+    if (!html5QrCode) {
+      html5QrCode = new Html5Qrcode("reader", { verbose: false });
+    }
+
+    startCamera(cameraConstraintsPrimary)
       .then(function () {
-        elCamStatus.textContent = "";
+        onCameraStarted();
       })
       .catch(function (err) {
         // 高解像度制約付きで失敗した場合、facingModeのみでフォールバック
-        startCamera({ facingMode: { ideal: "environment" } })
+        startCamera(cameraConstraintsFallback)
           .then(function () {
-            elCamStatus.textContent = "";
+            onCameraStarted();
           })
           .catch(function (err2) {
-            elCamStatus.textContent = "カメラを起動できません。カメラの利用を許可してください。";
-            showGlobalToast("カメラへのアクセスを許可してください");
+            elBtnStartCamera.disabled = false;
+            elBtnStartCamera.textContent = "カメラを起動する";
+            setOverlayError(describeStartError(err2));
           });
       });
   }
 
-  // 初回タップでAudioContextを有効化（iOS Safari対策）
-  document.body.addEventListener("touchstart", function initAudioOnce() {
+  function onCameraStarted() {
+    cameraStarted = true;
+    elCamStartOverlay.classList.add("hidden");
+    elCamStatus.textContent = "";
+    // カメラ起動と同じユーザー操作の流れでAudioContextも有効化しておく
     ensureAudioContext();
-    document.body.removeEventListener("touchstart", initAudioOnce);
-  }, { once: true });
+  }
 
-  window.addEventListener("load", function () {
+  elBtnStartCamera.addEventListener("click", function () {
+    ensureAudioContext();
     initCamera();
   });
 
   // ページ非表示時にカメラを一時停止（バッテリー節約・端末仕様上の安全策）
   document.addEventListener("visibilitychange", function () {
-    if (!html5QrCode) return;
+    if (!html5QrCode || !cameraStarted) return;
     if (document.hidden) {
       if (html5QrCode.getState && html5QrCode.getState() === Html5QrcodeScannerState.SCANNING) {
         html5QrCode.pause(true);
