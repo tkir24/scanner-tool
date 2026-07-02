@@ -164,8 +164,8 @@
   }
 
   .scan-frame-box {
-    width: 72%;
-    aspect-ratio: 1.6 / 1;
+    width: 78%;
+    aspect-ratio: 1 / 1;
     border-radius: 14px;
     position: relative;
   }
@@ -906,10 +906,12 @@
   var qrConfig = {
     fps: 12,
     qrbox: function (viewfinderWidth, viewfinderHeight) {
-      var size = Math.floor(Math.min(viewfinderWidth, viewfinderHeight) * 0.72);
-      return { width: size, height: Math.floor(size * 0.62) };
+      // QRコード（正方形）とバーコード（横長）の両方を安定して検出できるよう、
+      // 走査枠は正方形に近い形にする。横長の枠だとQRコードが収まりきらず
+      // 認識率が落ちるため。
+      var size = Math.floor(Math.min(viewfinderWidth, viewfinderHeight) * 0.78);
+      return { width: size, height: size };
     },
-    aspectRatio: 1.0,
     disableFlip: false,
     formatsToSupport: (window.Html5QrcodeSupportedFormats ? [
       Html5QrcodeSupportedFormats.QR_CODE,
