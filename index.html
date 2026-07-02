@@ -115,12 +115,19 @@
   #reader {
     width: 100%;
     height: 100%;
+    position: relative;
+    overflow: hidden;
   }
 
   #reader video {
     width: 100% !important;
     height: 100% !important;
     object-fit: cover !important;
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    display: block !important;
+    z-index: 1 !important;
   }
 
   /* html5-qrcode が生成する内部要素を非表示・無害化 */
@@ -129,9 +136,21 @@
   }
   #reader__scan_region {
     background: transparent !important;
+    position: absolute !important;
+    inset: 0 !important;
   }
   #reader__dashboard {
     display: none !important;
+  }
+  #reader__scan_region > div {
+    box-shadow: none !important;
+    border: none !important;
+  }
+  #reader > div {
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
   }
 
   .scan-frame {
@@ -241,6 +260,8 @@
     line-height: 1.7;
     color: var(--text-dim);
     max-width: 320px;
+    white-space: pre-wrap;
+    text-align: left;
   }
 
   #cam-error-detail.show-error {
@@ -945,21 +966,33 @@
     );
   }
 
+  function stringifyError(err) {
+    if (!err) return "詳細不明のエラー";
+    if (typeof err === "string") return err;
+    var name = err.name || "";
+    var message = err.message || "";
+    if (!name && !message) {
+      try { return JSON.stringify(err); } catch (e) { return String(err); }
+    }
+    return (name ? "[" + name + "] " : "") + message;
+  }
+
   function describeStartError(err) {
-    var msg = (err && (err.message || err.name || String(err))) || "";
+    var msg = stringifyError(err);
+    var hint = "";
     if (/NotAllowedError|Permission denied|denied/i.test(msg)) {
-      return "カメラの利用が許可されていません。ブラウザのサイト設定でカメラを「許可」に変更し、再読み込みしてください。";
+      hint = "カメラの利用が許可されていません。ブラウザのサイト設定でカメラを「許可」に変更し、再読み込みしてください。";
+    } else if (/NotFoundError|no camera/i.test(msg)) {
+      hint = "カメラが見つかりません。端末にカメラが搭載されているか確認してください。";
+    } else if (/NotReadableError|TrackStartError/i.test(msg)) {
+      hint = "カメラを他のアプリが使用中の可能性があります。他のカメラアプリを終了してから再度お試しください。";
+    } else if (/OverconstrainedError/i.test(msg)) {
+      hint = "指定した条件でカメラを起動できませんでした。";
+    } else {
+      hint = "カメラを起動できませんでした。";
     }
-    if (/NotFoundError|no camera/i.test(msg)) {
-      return "カメラが見つかりません。端末にカメラが搭載されているか確認してください。";
-    }
-    if (/NotReadableError|TrackStartError/i.test(msg)) {
-      return "カメラを他のアプリが使用中の可能性があります。他のカメラアプリを終了してから再度お試しください。";
-    }
-    if (/OverconstrainedError/i.test(msg)) {
-      return "指定した条件でカメラを起動できませんでした。標準設定で再試行します。";
-    }
-    return "カメラを起動できませんでした。ブラウザの権限設定を確認してください。（" + msg + "）";
+    // 原因切り分けのため、常に実際のエラー内容も併記する
+    return hint + "\n[詳細] " + msg;
   }
 
   function initCamera() {
@@ -996,7 +1029,7 @@
       clearTimeout(timeoutId);
       elBtnStartCamera.disabled = false;
       elBtnStartCamera.textContent = "カメラを起動する";
-      setOverlayError("スキャナーの初期化に失敗しました。（" + (initErr && initErr.message ? initErr.message : String(initErr)) + "）");
+      setOverlayError("スキャナーの初期化に失敗しました。\n[詳細] " + stringifyError(initErr));
       return;
     }
 
@@ -1018,17 +1051,55 @@
         .catch(onAllFailed);
     };
 
-    runStart(cameraConstraintsPrimary, function (err) {
-      // 高解像度制約付きで失敗した場合、facingModeのみでフォールバック
-      runStart(cameraConstraintsFallback, function (err2) {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeoutId);
-        elBtnStartCamera.disabled = false;
-        elBtnStartCamera.textContent = "カメラを起動する";
-        setOverlayError(describeStartError(err2));
+    // 複数の起動方式を順に試す。
+    // 1) facingMode + 高解像度制約（標準広角レンズ優先狙い）
+    // 2) facingMode のみ（制約形式の問題を避けるための単純化）
+    // 3) 背面カメラのdeviceIdを列挙して直接指定
+    var attempts = [cameraConstraintsPrimary, cameraConstraintsFallback];
+    var errors = [];
+
+    var tryNext = function () {
+      if (attempts.length === 0) {
+        // 最終手段: getCameras() でデバイス一覧を取得し、背面らしきものを直接指定
+        Html5Qrcode.getCameras()
+          .then(function (devices) {
+            if (!devices || devices.length === 0) {
+              finishWithError(errors);
+              return;
+            }
+            var backCam = devices.find(function (d) {
+              return /back|rear|environment/i.test(d.label || "");
+            }) || devices[devices.length - 1];
+
+            runStart({ deviceId: { exact: backCam.id } }, function (err) {
+              errors.push("[deviceId指定] " + stringifyError(err));
+              finishWithError(errors);
+            });
+          })
+          .catch(function (err) {
+            errors.push("[カメラ一覧取得] " + stringifyError(err));
+            finishWithError(errors);
+          });
+        return;
+      }
+      var constraints = attempts.shift();
+      runStart(constraints, function (err) {
+        errors.push(stringifyError(err));
+        tryNext();
       });
-    });
+    };
+
+    var finishWithError = function (errList) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      elBtnStartCamera.disabled = false;
+      elBtnStartCamera.textContent = "カメラを起動する";
+      var lastErr = errList[errList.length - 1] || "";
+      setOverlayError(describeStartError(lastErr) + "\n\n[試行履歴]\n" + errList.join("\n"));
+    };
+
+    tryNext();
   }
 
   function onCameraStarted() {
