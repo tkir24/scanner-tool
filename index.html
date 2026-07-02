@@ -1,233 +1,929 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>出荷管理スキャナー</title>
-    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
-    <style>
-        :root {
-            --primary: #007aff;
-            --danger: #ff3b30;
-            --bg: #f2f2f7;
-            --surface: #ffffff;
-            --text: #1c1c1e;
-            --border: #c6c6c8;
-        }
-        
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        
-        body { 
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            background-color: var(--bg); 
-            color: var(--text);
-            /* スクロールと引っ張り更新を許可 */
-            padding-bottom: 90px; /* 固定した下部ボタンがリストに被らないよう余白を確保 */
-        }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>シリアル読み取り - 発送検品</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<style>
+  :root {
+    --ink: #12181f;
+    --panel: #1a222c;
+    --panel-2: #212b37;
+    --line: #2c3846;
+    --accent: #2fd18f;
+    --accent-dim: #1f9e6c;
+    --danger: #ff5c5c;
+    --danger-dim: #d9433f;
+    --text: #eef2f6;
+    --text-dim: #8b98a8;
+    --warn: #ffb454;
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+  }
 
-        header {
-            background: var(--surface); padding: 16px; text-align: center;
-            font-size: 18px; font-weight: bold; border-bottom: 1px solid var(--border);
-        }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
-        #camera-container {
-            width: 100%; background: #000; position: relative;
-            aspect-ratio: 4 / 3; display: flex; justify-content: center; align-items: center;
-            overflow: hidden;
-        }
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+    background: var(--ink);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", "Yu Gothic", sans-serif;
+    touch-action: none;
+  }
 
-        #reader { width: 100%; height: 100%; border: none !important; }
-        #reader img { display: none !important; }
+  #app {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+  }
 
-        .overlay-button {
-            position: absolute; padding: 14px 24px; font-size: 16px; font-weight: bold;
-            background: var(--primary); color: white; border: none; border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.3); cursor: pointer; z-index: 20;
-        }
+  /* ===== ヘッダー ===== */
+  #header {
+    flex: 0 0 auto;
+    padding: calc(10px + var(--safe-top)) 16px 10px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    z-index: 20;
+  }
 
-        .list-header {
-            display: flex; justify-content: space-between; align-items: center;
-            padding: 12px 16px; background: var(--surface); border-bottom: 1px solid var(--border);
-            font-weight: bold; font-size: 15px;
-        }
+  #header .title-block {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
 
-        .count-badge {
-            background: var(--primary); color: white; padding: 2px 8px;
-            border-radius: 12px; font-size: 14px;
-        }
+  #header .title {
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: var(--text);
+  }
 
-        #result-list {
-            background: var(--surface);
-            padding: 0 16px;
-        }
+  #header .subtitle {
+    font-size: 11px;
+    color: var(--text-dim);
+  }
 
-        .result-item {
-            padding: 14px 0; border-bottom: 1px solid var(--border);
-            font-family: SFMono-Regular, Consolas, monospace; font-size: 18px;
-            letter-spacing: 1px;
-            animation: fadeIn 0.3s ease-in-out;
-        }
+  #count-badge {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 6px 14px;
+  }
 
-        @keyframes fadeIn { from { background-color: #e5f1ff; } to { background-color: transparent; } }
+  #count-badge .num {
+    font-size: 24px;
+    font-weight: 800;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+  }
 
-        /* 下部ボタンを画面に完全固定 */
-        .action-bar {
-            position: fixed;
-            bottom: 0; left: 0; right: 0;
-            display: flex; gap: 12px; padding: 16px;
-            background: var(--surface); border-top: 1px solid var(--border);
-            padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
-            z-index: 100;
-        }
+  #count-badge .unit {
+    font-size: 12px;
+    color: var(--text-dim);
+    font-weight: 600;
+  }
 
-        button.action-btn {
-            flex: 1; padding: 14px; font-size: 16px; font-weight: bold;
-            border: none; border-radius: 8px; color: white; cursor: pointer;
-        }
-        
-        .btn-copy { background: var(--primary); }
-        .btn-clear { background: var(--danger); }
-        button:active { filter: brightness(0.8); }
-    </style>
+  /* ===== カメラエリア ===== */
+  #scan-area {
+    flex: 0 0 auto;
+    position: relative;
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    max-height: 42vh;
+    background: #000;
+    overflow: hidden;
+  }
+
+  #reader {
+    width: 100%;
+    height: 100%;
+  }
+
+  #reader video {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+  }
+
+  /* html5-qrcode が生成する内部要素を非表示・無害化 */
+  #reader img {
+    display: none !important;
+  }
+  #reader__scan_region {
+    background: transparent !important;
+  }
+  #reader__dashboard {
+    display: none !important;
+  }
+
+  .scan-frame {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 5;
+  }
+
+  .scan-frame-box {
+    width: 72%;
+    aspect-ratio: 1.6 / 1;
+    border-radius: 14px;
+    position: relative;
+  }
+
+  .scan-frame-box::before,
+  .scan-frame-box::after {
+    content: "";
+    position: absolute;
+    width: 28px;
+    height: 28px;
+    border-color: var(--accent);
+    border-style: solid;
+  }
+
+  .corner {
+    position: absolute;
+    width: 26px;
+    height: 26px;
+    border-color: var(--accent);
+    border-style: solid;
+    filter: drop-shadow(0 0 3px rgba(47, 209, 143, 0.6));
+  }
+  .corner.tl { top: -2px; left: -2px; border-width: 4px 0 0 4px; border-radius: 8px 0 0 0; }
+  .corner.tr { top: -2px; right: -2px; border-width: 4px 4px 0 0; border-radius: 0 8px 0 0; }
+  .corner.bl { bottom: -2px; left: -2px; border-width: 0 0 4px 4px; border-radius: 0 0 0 8px; }
+  .corner.br { bottom: -2px; right: -2px; border-width: 0 4px 4px 0; border-radius: 0 0 8px 0; }
+
+  .scan-line {
+    position: absolute;
+    left: 4%;
+    right: 4%;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    top: 8%;
+    animation: scanmove 2.2s ease-in-out infinite;
+    box-shadow: 0 0 8px 1px rgba(47, 209, 143, 0.7);
+  }
+
+  @keyframes scanmove {
+    0%   { top: 6%; opacity: 0.9; }
+    50%  { top: 92%; opacity: 0.9; }
+    100% { top: 6%; opacity: 0.9; }
+  }
+
+  #cam-status {
+    position: absolute;
+    bottom: 10px;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font-size: 12px;
+    color: var(--text-dim);
+    z-index: 6;
+    pointer-events: none;
+  }
+
+  .flash-ok {
+    position: absolute;
+    inset: 0;
+    background: rgba(47, 209, 143, 0.35);
+    z-index: 10;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .flash-ok.active {
+    animation: flashfade 0.35s ease-out;
+  }
+  @keyframes flashfade {
+    0% { opacity: 1; }
+    100% { opacity: 0; }
+  }
+
+  .dup-toast {
+    position: absolute;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(255, 180, 84, 0.95);
+    color: #2a1c00;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 6px 14px;
+    border-radius: 20px;
+    z-index: 15;
+    opacity: 0;
+    white-space: nowrap;
+  }
+  .dup-toast.show {
+    animation: toastpop 1.4s ease;
+  }
+  @keyframes toastpop {
+    0%   { opacity: 0; transform: translateX(-50%) translateY(-6px); }
+    15%  { opacity: 1; transform: translateX(-50%) translateY(0); }
+    80%  { opacity: 1; }
+    100% { opacity: 0; transform: translateX(-50%) translateY(-4px); }
+  }
+
+  /* ===== リストエリア ===== */
+  #list-wrap {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--ink);
+  }
+
+  #list-heading {
+    flex: 0 0 auto;
+    padding: 10px 16px 6px;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-dim);
+    letter-spacing: 0.04em;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  #list-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
+    padding: 0 12px 8px;
+  }
+
+  #empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-dim);
+    gap: 6px;
+    padding-bottom: 20px;
+  }
+  #empty-state .icon {
+    font-size: 28px;
+    opacity: 0.5;
+  }
+  #empty-state .msg {
+    font-size: 13px;
+  }
+
+  .item-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    animation: itemin 0.25s ease;
+  }
+
+  @keyframes itemin {
+    0% { opacity: 0; transform: translateY(-8px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+
+  .item-row .idx {
+    flex: 0 0 auto;
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    background: var(--panel-2);
+    color: var(--accent);
+    font-size: 12px;
+    font-weight: 800;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .item-row .serial {
+    flex: 1 1 auto;
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    font-variant-numeric: tabular-nums;
+    word-break: break-all;
+  }
+
+  .item-row .del-btn {
+    flex: 0 0 auto;
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--text-dim);
+    font-size: 15px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .item-row .del-btn:active {
+    background: var(--danger-dim);
+    color: #fff;
+    border-color: var(--danger-dim);
+  }
+
+  /* ===== 下部固定ボタン ===== */
+  #action-bar {
+    flex: 0 0 auto;
+    display: flex;
+    gap: 10px;
+    padding: 10px 16px calc(12px + var(--safe-bottom));
+    background: var(--panel);
+    border-top: 1px solid var(--line);
+    z-index: 20;
+  }
+
+  #action-bar button {
+    flex: 1 1 0;
+    border: none;
+    border-radius: 12px;
+    padding: 15px 0;
+    font-size: 15px;
+    font-weight: 800;
+    letter-spacing: 0.03em;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    color: #fff;
+  }
+
+  #btn-clear {
+    background: var(--danger-dim);
+  }
+  #btn-clear:active {
+    background: #b83431;
+  }
+
+  #btn-copy {
+    background: var(--accent-dim);
+  }
+  #btn-copy:active {
+    background: #187e58;
+  }
+
+  #btn-copy.copied {
+    background: var(--accent);
+  }
+
+  #action-bar button .btn-icon {
+    font-size: 16px;
+  }
+
+  /* ===== モーダル（確認） ===== */
+  #modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 100;
+    display: none;
+    align-items: flex-end;
+    justify-content: center;
+  }
+  #modal-overlay.show {
+    display: flex;
+  }
+  #modal-sheet {
+    width: 100%;
+    max-width: 520px;
+    background: var(--panel);
+    border-radius: 16px 16px 0 0;
+    padding: 22px 20px calc(20px + var(--safe-bottom));
+    border-top: 1px solid var(--line);
+  }
+  #modal-sheet .modal-title {
+    font-size: 15px;
+    font-weight: 800;
+    margin-bottom: 6px;
+  }
+  #modal-sheet .modal-desc {
+    font-size: 13px;
+    color: var(--text-dim);
+    margin-bottom: 18px;
+    line-height: 1.6;
+  }
+  #modal-sheet .modal-btns {
+    display: flex;
+    gap: 10px;
+  }
+  #modal-sheet button {
+    flex: 1;
+    border: none;
+    border-radius: 10px;
+    padding: 13px 0;
+    font-size: 14px;
+    font-weight: 700;
+  }
+  #modal-cancel {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--line) !important;
+  }
+  #modal-confirm {
+    background: var(--danger-dim);
+    color: #fff;
+  }
+
+  /* トースト（コピー完了など） */
+  #global-toast {
+    position: fixed;
+    top: calc(70px + var(--safe-top));
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(30, 38, 48, 0.96);
+    border: 1px solid var(--line);
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 700;
+    padding: 10px 18px;
+    border-radius: 24px;
+    z-index: 200;
+    opacity: 0;
+    pointer-events: none;
+    white-space: nowrap;
+  }
+  #global-toast.show {
+    animation: gtoast 1.8s ease;
+  }
+  @keyframes gtoast {
+    0%   { opacity: 0; transform: translateX(-50%) translateY(-6px); }
+    12%  { opacity: 1; transform: translateX(-50%) translateY(0); }
+    85%  { opacity: 1; }
+    100% { opacity: 0; transform: translateX(-50%) translateY(-6px); }
+  }
+</style>
 </head>
 <body>
 
-    <header>出荷管理スキャナー</header>
+<div id="app">
 
-    <div id="camera-container">
-        <div id="reader"></div>
-        <button id="start-btn" class="overlay-button">カメラを起動</button>
+  <!-- ヘッダー -->
+  <div id="header">
+    <div class="title-block">
+      <div class="title">シリアル読み取り</div>
+      <div class="subtitle">箱詰め検品スキャン</div>
     </div>
-
-    <div class="list-header">
-        <span>スキャン済み</span>
-        <span class="count-badge"><span id="count-display">0</span> 件</span>
+    <div id="count-badge">
+      <span class="num" id="count-num">0</span>
+      <span class="unit">件</span>
     </div>
+  </div>
 
-    <div id="result-list"></div>
-
-    <div class="action-bar">
-        <button class="action-btn btn-clear" onclick="clearList()">一括削除</button>
-        <button class="action-btn btn-copy" onclick="copyList()">一括コピー</button>
+  <!-- カメラエリア -->
+  <div id="scan-area">
+    <div id="reader"></div>
+    <div class="flash-ok" id="flash-ok"></div>
+    <div class="dup-toast" id="dup-toast">重複しています</div>
+    <div class="scan-frame">
+      <div class="scan-frame-box">
+        <div class="corner tl"></div>
+        <div class="corner tr"></div>
+        <div class="corner bl"></div>
+        <div class="corner br"></div>
+        <div class="scan-line"></div>
+      </div>
     </div>
+    <div id="cam-status">カメラを起動しています…</div>
+  </div>
 
-    <script>
-        const resultList = document.getElementById('result-list');
-        const countDisplay = document.getElementById('count-display');
-        const startBtn = document.getElementById('start-btn');
-        const scannedSet = new Set();
-        
-        let html5QrCode;
-        let audioContext;
+  <!-- リストエリア -->
+  <div id="list-wrap">
+    <div id="list-heading">
+      <span>読み取り履歴</span>
+      <span id="list-heading-sub"></span>
+    </div>
+    <div id="list-scroll">
+      <div id="empty-state">
+        <div class="icon">📦</div>
+        <div class="msg">スキャンするとここに追加されます</div>
+      </div>
+      <div id="list-items"></div>
+    </div>
+  </div>
 
-        function initAudio() {
-            if (!audioContext) {
-                audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            }
-            if (audioContext.state === 'suspended') {
-                audioContext.resume();
-            }
-        }
+  <!-- 固定アクションボタン -->
+  <div id="action-bar">
+    <button id="btn-clear">
+      <span class="btn-icon">🗑</span>
+      <span>一括削除</span>
+    </button>
+    <button id="btn-copy">
+      <span class="btn-icon">📋</span>
+      <span id="btn-copy-label">一括コピー</span>
+    </button>
+  </div>
 
-        function playBeep() {
-            if (!audioContext) return;
-            const osc = audioContext.createOscillator();
-            const gain = audioContext.createGain();
-            osc.connect(gain);
-            gain.connect(audioContext.destination);
-            
-            osc.type = 'sine';
-            osc.frequency.setValueAtTime(1200, audioContext.currentTime);
-            gain.gain.setValueAtTime(0.1, audioContext.currentTime);
-            
-            osc.start();
-            gain.gain.exponentialRampToValueAtTime(0.00001, audioContext.currentTime + 0.1);
-            osc.stop(audioContext.currentTime + 0.1);
-        }
+</div>
 
-        // カメラ起動処理
-        startBtn.addEventListener('click', () => {
-            initAudio(); // ボタンタップ時に音声を許可状態にする
-            startBtn.style.display = 'none';
+<!-- 確認モーダル -->
+<div id="modal-overlay">
+  <div id="modal-sheet">
+    <div class="modal-title">リストを削除しますか</div>
+    <div class="modal-desc">読み取り済みのシリアルナンバーがすべて削除されます。この操作は取り消せません。</div>
+    <div class="modal-btns">
+      <button id="modal-cancel">キャンセル</button>
+      <button id="modal-confirm">削除する</button>
+    </div>
+  </div>
+</div>
 
-            // ScannerではなくコアのHtml5Qrcodeを直接使用し、UIを完全排除
-            html5QrCode = new Html5Qrcode("reader");
+<div id="global-toast"></div>
 
-            // 背面カメラ(environment)を要求し、高解像度を指定して標準レンズを誘導
-            const config = { fps: 15, qrbox: { width: 250, height: 250 } };
-            const cameraConfig = { 
-                facingMode: "environment",
-                width: { ideal: 1920 },
-                height: { ideal: 1080 }
-            };
+<script>
+(function () {
+  "use strict";
 
-            html5QrCode.start(cameraConfig, config, onScanSuccess)
-                .catch(err => {
-                    alert("カメラの起動に失敗しました。権限を確認してください。");
-                    startBtn.style.display = 'block';
-                });
-        });
+  // ===== 状態管理 =====
+  var serialSet = new Set();      // 重複チェック用
+  var serialList = [];            // 表示順（新しい順）
+  var isProcessingScan = false;   // 連続読み取り防止フラグ
+  var scanCooldownMs = 1200;      // 同一コード連続検知の抑制時間
 
-        // 読み取り成功時の処理
-        function onScanSuccess(decodedText) {
-            const match = decodedText.trim().match(/(\d+)$/);
+  var elCountNum = document.getElementById("count-num");
+  var elListItems = document.getElementById("list-items");
+  var elEmptyState = document.getElementById("empty-state");
+  var elListHeadingSub = document.getElementById("list-heading-sub");
+  var elFlashOk = document.getElementById("flash-ok");
+  var elDupToast = document.getElementById("dup-toast");
+  var elCamStatus = document.getElementById("cam-status");
+  var elGlobalToast = document.getElementById("global-toast");
 
-            if (match) {
-                const targetNumber = match[1];
+  // ===== 音声フィードバック（Web Audio API） =====
+  var audioCtx = null;
+  function ensureAudioContext() {
+    if (!audioCtx) {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (AC) audioCtx = new AC();
+    }
+    if (audioCtx && audioCtx.state === "suspended") {
+      audioCtx.resume();
+    }
+    return audioCtx;
+  }
 
-                if (!scannedSet.has(targetNumber)) {
-                    scannedSet.add(targetNumber);
-                    
-                    // リストの先頭に新しい項目を追加（スクロール不要で常に最新が見える）
-                    const item = document.createElement('div');
-                    item.className = 'result-item';
-                    item.textContent = targetNumber;
-                    resultList.prepend(item);
-                    
-                    // 件数更新
-                    countDisplay.textContent = scannedSet.size;
-                    
-                    // ビープ音とバイブレーション
-                    playBeep();
-                    if (navigator.vibrate) navigator.vibrate(50);
-                }
-            }
-        }
+  function playBeep() {
+    var ctx = ensureAudioContext();
+    if (!ctx) return;
+    var osc = ctx.createOscillator();
+    var gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = 1800;
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.35, ctx.currentTime + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.12);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.13);
+  }
 
-        // 一括コピー機能
-        function copyList() {
-            if (scannedSet.size === 0) {
-                alert("コピーするデータがありません。");
-                return;
-            }
-            // Setを改行区切りの文字列に変換
-            const textToCopy = Array.from(scannedSet).join('\n');
-            
-            // クリップボードにコピー
-            navigator.clipboard.writeText(textToCopy).then(() => {
-                alert(scannedSet.size + "件のデータをコピーしました。");
-            }).catch(err => {
-                // 古い端末用のフォールバック
-                const textArea = document.createElement("textarea");
-                textArea.value = textToCopy;
-                document.body.appendChild(textArea);
-                textArea.select();
-                document.execCommand("copy");
-                document.body.removeChild(textArea);
-                alert(scannedSet.size + "件のデータをコピーしました。");
-            });
-        }
+  function playErrorTone() {
+    var ctx = ensureAudioContext();
+    if (!ctx) return;
+    var osc = ctx.createOscillator();
+    var gain = ctx.createGain();
+    osc.type = "square";
+    osc.frequency.value = 320;
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.18, ctx.currentTime + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.16);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.17);
+  }
 
-        // 一括削除機能
-        function clearList() {
-            if (scannedSet.size === 0) return;
-            
-            if (confirm("スキャンしたリストをすべて削除しますか？")) {
-                scannedSet.clear();
-                resultList.innerHTML = '';
-                countDisplay.textContent = '0';
-            }
-        }
-    </script>
+  function vibrate(pattern) {
+    if (navigator.vibrate) {
+      try { navigator.vibrate(pattern); } catch (e) {}
+    }
+  }
+
+  // ===== 数値抽出（末尾の連続した数字） =====
+  function extractSerial(rawText) {
+    if (!rawText) return null;
+    var trimmed = String(rawText).trim();
+    var match = trimmed.match(/(\d+)\s*$/);
+    if (match && match[1]) {
+      return match[1];
+    }
+    return null;
+  }
+
+  // ===== リスト描画 =====
+  function renderList() {
+    elCountNum.textContent = String(serialList.length);
+    elListHeadingSub.textContent = serialList.length > 0 ? "最新が上に表示されます" : "";
+
+    if (serialList.length === 0) {
+      elEmptyState.style.display = "flex";
+      elListItems.innerHTML = "";
+      return;
+    }
+    elEmptyState.style.display = "none";
+
+    var html = "";
+    for (var i = 0; i < serialList.length; i++) {
+      var displayIndex = serialList.length - i;
+      var serial = serialList[i];
+      html +=
+        '<div class="item-row" data-serial="' + serial + '">' +
+          '<div class="idx">' + displayIndex + '</div>' +
+          '<div class="serial">' + escapeHtml(serial) + '</div>' +
+          '<button class="del-btn" data-action="delete-one" data-serial="' + serial + '">✕</button>' +
+        '</div>';
+    }
+    elListItems.innerHTML = html;
+  }
+
+  function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  // ===== 個別削除（イベント委譲） =====
+  elListItems.addEventListener("click", function (e) {
+    var btn = e.target.closest('[data-action="delete-one"]');
+    if (!btn) return;
+    var serial = btn.getAttribute("data-serial");
+    removeSerial(serial);
+  });
+
+  function removeSerial(serial) {
+    serialSet.delete(serial);
+    var idx = serialList.indexOf(serial);
+    if (idx !== -1) serialList.splice(idx, 1);
+    renderList();
+  }
+
+  // ===== 一時演出 =====
+  function showFlash() {
+    elFlashOk.classList.remove("active");
+    void elFlashOk.offsetWidth;
+    elFlashOk.classList.add("active");
+  }
+
+  function showDupToast() {
+    elDupToast.classList.remove("show");
+    void elDupToast.offsetWidth;
+    elDupToast.classList.add("show");
+  }
+
+  function showGlobalToast(msg) {
+    elGlobalToast.textContent = msg;
+    elGlobalToast.classList.remove("show");
+    void elGlobalToast.offsetWidth;
+    elGlobalToast.classList.add("show");
+  }
+
+  // ===== スキャン成功時のハンドラ =====
+  var lastDecodedText = null;
+  var lastDecodedAt = 0;
+
+  function onScanSuccess(decodedText) {
+    var now = Date.now();
+    if (decodedText === lastDecodedText && (now - lastDecodedAt) < scanCooldownMs) {
+      return; // 同一コードの連続検知を抑制
+    }
+    lastDecodedText = decodedText;
+    lastDecodedAt = now;
+
+    var serial = extractSerial(decodedText);
+
+    if (!serial) {
+      playErrorTone();
+      vibrate(80);
+      showGlobalToast("数字を認識できませんでした");
+      return;
+    }
+
+    if (serialSet.has(serial)) {
+      playErrorTone();
+      vibrate([40, 40, 40]);
+      showDupToast();
+      return;
+    }
+
+    serialSet.add(serial);
+    serialList.unshift(serial);
+    renderList();
+
+    playBeep();
+    vibrate(60);
+    showFlash();
+  }
+
+  function onScanFailure() {
+    // 未検出フレームは無視（頻発するためログ出力しない）
+  }
+
+  // ===== 一括削除 =====
+  var elModalOverlay = document.getElementById("modal-overlay");
+  var elModalCancel = document.getElementById("modal-cancel");
+  var elModalConfirm = document.getElementById("modal-confirm");
+
+  document.getElementById("btn-clear").addEventListener("click", function () {
+    if (serialList.length === 0) {
+      showGlobalToast("リストは空です");
+      return;
+    }
+    elModalOverlay.classList.add("show");
+  });
+
+  elModalCancel.addEventListener("click", function () {
+    elModalOverlay.classList.remove("show");
+  });
+
+  elModalOverlay.addEventListener("click", function (e) {
+    if (e.target === elModalOverlay) {
+      elModalOverlay.classList.remove("show");
+    }
+  });
+
+  elModalConfirm.addEventListener("click", function () {
+    serialSet.clear();
+    serialList = [];
+    renderList();
+    elModalOverlay.classList.remove("show");
+    showGlobalToast("リストを削除しました");
+  });
+
+  // ===== 一括コピー =====
+  var elBtnCopy = document.getElementById("btn-copy");
+  var elBtnCopyLabel = document.getElementById("btn-copy-label");
+
+  elBtnCopy.addEventListener("click", function () {
+    if (serialList.length === 0) {
+      showGlobalToast("コピーする項目がありません");
+      return;
+    }
+    // 表示は新しい順だが、コピーは読み取った順（古い→新しい）で出力
+    var ordered = serialList.slice().reverse();
+    var text = ordered.join("\n");
+
+    copyToClipboard(text).then(function (ok) {
+      if (ok) {
+        elBtnCopy.classList.add("copied");
+        var original = elBtnCopyLabel.textContent;
+        elBtnCopyLabel.textContent = "コピーしました";
+        showGlobalToast(serialList.length + "件をコピーしました");
+        setTimeout(function () {
+          elBtnCopy.classList.remove("copied");
+          elBtnCopyLabel.textContent = original;
+        }, 1500);
+      } else {
+        showGlobalToast("コピーに失敗しました");
+      }
+    });
+  });
+
+  function copyToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text).then(function () { return true; }).catch(function () {
+        return fallbackCopy(text);
+      });
+    }
+    return Promise.resolve(fallbackCopy(text));
+  }
+
+  function fallbackCopy(text) {
+    try {
+      var ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      var ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return ok;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // ===== カメラ初期化（Html5Qrcode コアクラス） =====
+  var html5QrCode = new Html5Qrcode("reader", { verbose: false });
+
+  var qrConfig = {
+    fps: 12,
+    qrbox: function (viewfinderWidth, viewfinderHeight) {
+      var size = Math.floor(Math.min(viewfinderWidth, viewfinderHeight) * 0.72);
+      return { width: size, height: Math.floor(size * 0.62) };
+    },
+    aspectRatio: 1.0,
+    disableFlip: false,
+    formatsToSupport: (window.Html5QrcodeSupportedFormats ? [
+      Html5QrcodeSupportedFormats.QR_CODE,
+      Html5QrcodeSupportedFormats.CODE_128,
+      Html5QrcodeSupportedFormats.CODE_39,
+      Html5QrcodeSupportedFormats.EAN_13,
+      Html5QrcodeSupportedFormats.EAN_8,
+      Html5QrcodeSupportedFormats.UPC_A,
+      Html5QrcodeSupportedFormats.UPC_E,
+      Html5QrcodeSupportedFormats.ITF,
+      Html5QrcodeSupportedFormats.CODABAR
+    ] : undefined)
+  };
+
+  // 背面の標準広角カメラを優先させるため、facingMode に加えて高解像度制約を付与する。
+  // これにより一部Android端末（Galaxy S23 FE等）で超広角カメラが誤って
+  // 選択される事象を回避しやすくする。
+  var cameraConstraints = {
+    facingMode: { ideal: "environment" },
+    width: { ideal: 1920 },
+    height: { ideal: 1080 }
+  };
+
+  function startCamera(constraints) {
+    return html5QrCode.start(
+      constraints,
+      qrConfig,
+      onScanSuccess,
+      onScanFailure
+    );
+  }
+
+  function initCamera() {
+    elCamStatus.textContent = "カメラを起動しています…";
+
+    startCamera(cameraConstraints)
+      .then(function () {
+        elCamStatus.textContent = "";
+      })
+      .catch(function (err) {
+        // 高解像度制約付きで失敗した場合、facingModeのみでフォールバック
+        startCamera({ facingMode: { ideal: "environment" } })
+          .then(function () {
+            elCamStatus.textContent = "";
+          })
+          .catch(function (err2) {
+            elCamStatus.textContent = "カメラを起動できません。カメラの利用を許可してください。";
+            showGlobalToast("カメラへのアクセスを許可してください");
+          });
+      });
+  }
+
+  // 初回タップでAudioContextを有効化（iOS Safari対策）
+  document.body.addEventListener("touchstart", function initAudioOnce() {
+    ensureAudioContext();
+    document.body.removeEventListener("touchstart", initAudioOnce);
+  }, { once: true });
+
+  window.addEventListener("load", function () {
+    initCamera();
+  });
+
+  // ページ非表示時にカメラを一時停止（バッテリー節約・端末仕様上の安全策）
+  document.addEventListener("visibilitychange", function () {
+    if (!html5QrCode) return;
+    if (document.hidden) {
+      if (html5QrCode.getState && html5QrCode.getState() === Html5QrcodeScannerState.SCANNING) {
+        html5QrCode.pause(true);
+      }
+    } else {
+      if (html5QrCode.getState && html5QrCode.getState() === Html5QrcodeScannerState.PAUSED) {
+        html5QrCode.resume();
+      }
+    }
+  });
+
+})();
+</script>
+
 </body>
 </html>
