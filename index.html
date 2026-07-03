@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>シリアル読み取り - 発送検品</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js" onerror="window.__html5QrcodeLoadFailed = true;"></script>
+<script src="https://cdn.jsdelivr.net/npm/zxing-wasm@1/dist/iife/reader/index.js" onerror="window.__zxingLoadFailed = true;"></script>
 <style>
   :root {
     --ink: #12181f;
@@ -119,38 +119,15 @@
     overflow: hidden;
   }
 
-  #reader video {
-    width: 100% !important;
-    height: 100% !important;
-    object-fit: cover !important;
-    position: absolute !important;
-    top: 0 !important;
-    left: 0 !important;
-    display: block !important;
-    z-index: 1 !important;
-  }
-
-  /* html5-qrcode が生成する内部要素を非表示・無害化 */
-  #reader img {
-    display: none !important;
-  }
-  #reader__scan_region {
-    background: transparent !important;
-    position: absolute !important;
-    inset: 0 !important;
-  }
-  #reader__dashboard {
-    display: none !important;
-  }
-  #reader__scan_region > div {
-    box-shadow: none !important;
-    border: none !important;
-  }
-  #reader > div {
-    position: absolute !important;
-    inset: 0 !important;
-    width: 100% !important;
-    height: 100% !important;
+  #scan-video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 1;
+    display: block;
   }
 
   .scan-frame {
@@ -594,7 +571,9 @@
 
   <!-- カメラエリア -->
   <div id="scan-area">
-    <div id="reader"></div>
+    <div id="reader">
+      <video id="scan-video" playsinline muted></video>
+    </div>
     <div class="dup-toast" id="dup-toast">重複しています</div>
     <div class="scan-frame">
       <div class="scan-frame-box">
@@ -918,57 +897,37 @@
     }
   }
 
-  // ===== カメラ初期化（Html5Qrcode コアクラス） =====
-  var html5QrCode = null;
+  // ===== カメラ初期化・QR/バーコード検出（zxing-wasm使用） =====
+  var mediaStream = null;
   var cameraStarted = false;
+  var scanLoopId = null;
+  var scanCanvas = document.createElement("canvas");
+  var scanCanvasCtx = scanCanvas.getContext("2d", { willReadFrequently: true });
+  var elScanVideo = document.getElementById("scan-video");
 
   var elCamStartOverlay = document.getElementById("cam-start-overlay");
   var elBtnStartCamera = document.getElementById("btn-start-camera");
   var elCamErrorDetail = document.getElementById("cam-error-detail");
 
-  // iOS（Safari/Chrome for iOS はいずれもWebKitベース）は、ネイティブの
-  // BarcodeDetector APIが使えず、常にJS実装（zxing-js）でのデコードになる。
-  // そのため fps を高くしすぎると処理が追いつかず、かえって検出率が落ちる。
-  // また走査枠が小さすぎると、コード全体を認識しづらい傾向がある。
   var isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) ||
     (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1); // iPadOS対策
 
-  var qrConfig = {
-    fps: isIOS ? 8 : 12,
-    // qrbox は固定の数値で指定する。
-    // 関数形式（viewfinderWidth/Height を受け取って計算する方式）は、
-    // 環境によって渡される値が 0 や不正確になることがあり、その場合
-    // 走査枠が壊れた状態になり QR コードが全く検出されなくなることがある。
-    // 固定値のほうが確実に動作するため、こちらを採用する。
-    qrbox: 260,
-    disableFlip: false,
-    // 注意: useBarCodeDetectorIfSupported を true にすると、環境によっては
-    // ネイティブ BarcodeDetector 側のフォーマット変換の不整合により
-    // バーコードは検出できてもQRコードだけ全く反応しなくなる既知の不具合がある。
-    // そのため確実に動作する zxing-js（JS実装）に統一し、無効化する。
-    useBarCodeDetectorIfSupported: false
-    // formatsToSupport は意図的に指定しない。
-    // 複数フォーマットを明示的に列挙すると、環境によっては内部のデコーダー
-    // 登録順の影響でQRコードが検出対象から外れてしまう既知の不具合報告がある。
-    // 指定しない場合はライブラリ側のデフォルト（全フォーマット対応）が使われ、
-    // QR・バーコードとも安定して検出される。
+  // zxing-wasm（ZXing-C++のWebAssembly版）を使用する。
+  // これまで使用していた html5-qrcode（内部で zxing-js を使用）は、
+  // バッテリー等に印刷された低コントラスト・小サイズのQRコードに対して
+  // 検出できないケースが確認されたため、より検出精度の高いエンジンに切り替える。
+  // tryHarder はデフォルトで true になっており、処理時間と引き換えに
+  // 検出率を上げるモードで動作する。
+  var zxingReaderOptions = {
+    tryHarder: true,
+    formats: ["QRCode", "Code128", "Code39", "EAN-13", "EAN-8", "UPC-A", "UPC-E", "ITF", "Codabar"],
+    maxSymbols: 1
   };
 
-
-  // facingMode 任せで起動する（複数端末で安定して動く方式）。
-  // iOSは解像度要求を厳しくしすぎるとオートフォーカスが不安定になることがあるため、
-  // やや控えめな値にする。Androidは高めを維持する。
-  var qrConfigHighRes = Object.assign({}, qrConfig, {
-    videoConstraints: {
-      facingMode: { ideal: "environment" },
-      width: { ideal: isIOS ? 1280 : 1920 },
-      height: { ideal: isIOS ? 720 : 1080 }
-    }
-  });
-
-  // cameraIdOrConfig は常に単一キーのオブジェクトにする
-  var cameraConstraintsPrimary = { facingMode: { ideal: "environment" } };
-  var cameraConstraintsFallback = { facingMode: "environment" };
+  // スキャンのフレーム間隔（ミリ秒）。zxing-wasmはtryHarderにより
+  // 1フレームあたりの処理コストが高いため、html5-qrcode使用時のfps指定より
+  // 間隔を広めに取り、UIの応答性とバッテリー消費のバランスを取る。
+  var scanIntervalMs = isIOS ? 220 : 150;
 
   function setOverlayError(message) {
     elCamErrorDetail.textContent = message;
@@ -989,15 +948,6 @@
       return "この端末またはブラウザはカメラAPIに対応していません。Chrome または Safari の最新版でお試しください。";
     }
     return null;
-  }
-
-  function startCamera(constraints, config) {
-    return html5QrCode.start(
-      constraints,
-      config || qrConfig,
-      onScanSuccess,
-      onScanFailure
-    );
   }
 
   function stringifyError(err) {
@@ -1029,8 +979,12 @@
     return hint + "\n[詳細] " + msg;
   }
 
+  function startMediaStream(constraints) {
+    return navigator.mediaDevices.getUserMedia({ video: constraints });
+  }
+
   function initCamera() {
-    if (window.__html5QrcodeLoadFailed || typeof Html5Qrcode === "undefined") {
+    if (window.__zxingLoadFailed || typeof ZXingWASM === "undefined") {
       setOverlayError("スキャンライブラリの読み込みに失敗しました。通信環境を確認し、ページを再読み込みしてください。");
       return;
     }
@@ -1045,7 +999,6 @@
     elBtnStartCamera.disabled = true;
     elBtnStartCamera.textContent = "起動しています…";
 
-    // 一定時間経過してもコールバックが一切来ない場合の保険（無反応状態の検知）
     var settled = false;
     var timeoutId = setTimeout(function () {
       if (settled) return;
@@ -1054,18 +1007,6 @@
       elBtnStartCamera.textContent = "カメラを起動する";
       setOverlayError("カメラからの応答がありません。ブラウザのアドレスバー付近にカメラ権限のアイコンが出ていないか確認してください。表示されない場合は、ブラウザのサイト設定からこのページのカメラ権限を確認してください。");
     }, 8000);
-
-    try {
-      if (!html5QrCode) {
-        html5QrCode = new Html5Qrcode("reader", { verbose: false });
-      }
-    } catch (initErr) {
-      clearTimeout(timeoutId);
-      elBtnStartCamera.disabled = false;
-      elBtnStartCamera.textContent = "カメラを起動する";
-      setOverlayError("スキャナーの初期化に失敗しました。\n[詳細] " + stringifyError(initErr));
-      return;
-    }
 
     var errors = [];
 
@@ -1079,55 +1020,133 @@
       setOverlayError(describeStartError(lastErr) + "\n\n[試行履歴]\n" + errList.join("\n"));
     };
 
-    var finishWithSuccess = function () {
+    var finishWithSuccess = function (stream) {
       if (settled) return;
       settled = true;
       clearTimeout(timeoutId);
-      onCameraStarted();
+      onCameraStarted(stream);
     };
 
-    // facingMode: environment で起動する（複数端末で安定して動く方式）。
-    // 1) videoConstraints に高解像度指定を付与した設定でまず試す。
-    // 2) 失敗した場合は指定を緩めて再試行する。
-    try {
-      startCamera(cameraConstraintsPrimary, qrConfigHighRes)
-        .then(function () {
-          finishWithSuccess();
-        })
-        .catch(function (err1) {
-          errors.push(stringifyError(err1));
-          startCamera(cameraConstraintsFallback, qrConfig)
-            .then(function () {
-              finishWithSuccess();
-            })
-            .catch(function (err2) {
-              errors.push(stringifyError(err2));
-              finishWithError(errors);
-            });
-        });
-    } catch (syncErr) {
-      errors.push(stringifyError(syncErr));
-      finishWithError(errors);
-    }
+    // 高解像度指定つきの背面カメラでまず試し、失敗したら緩い指定で再試行する。
+    // iOSは解像度要求を厳しくしすぎるとオートフォーカスが不安定になることがあるため、
+    // やや控えめな値にする。
+    var constraintsPrimary = {
+      facingMode: { ideal: "environment" },
+      width: { ideal: isIOS ? 1280 : 1920 },
+      height: { ideal: isIOS ? 720 : 1080 }
+    };
+    var constraintsFallback = { facingMode: "environment" };
+
+    startMediaStream(constraintsPrimary)
+      .then(finishWithSuccess)
+      .catch(function (err1) {
+        errors.push(stringifyError(err1));
+        startMediaStream(constraintsFallback)
+          .then(finishWithSuccess)
+          .catch(function (err2) {
+            errors.push(stringifyError(err2));
+            finishWithError(errors);
+          });
+      });
   }
 
-  function onCameraStarted() {
+  function onCameraStarted(stream) {
+    mediaStream = stream;
+    elScanVideo.srcObject = stream;
+    elScanVideo.setAttribute("playsinline", "true");
+    elScanVideo.muted = true;
+
+    elScanVideo.play().catch(function () {
+      // 一部ブラウザで play() が Promise を reject することがあるが、
+      // srcObject 設定後は自動再生されるため致命的ではない。
+    });
+
     cameraStarted = true;
     elCamStartOverlay.classList.add("hidden");
     elCamStatus.textContent = "";
-    // カメラ起動と同じユーザー操作の流れでAudioContextも有効化しておく
     ensureAudioContext();
 
-    // iOS Safari は video 要素に playsinline / muted が無いと再生が不安定になることがあるため、
-    // html5-qrcode が生成した video 要素に念のため明示的に付与しておく。
-    var videoEl = document.querySelector("#reader video");
-    if (videoEl) {
-      videoEl.setAttribute("playsinline", "true");
-      videoEl.setAttribute("muted", "true");
-      videoEl.muted = true;
+    elBtnStopCamera.classList.add("visible");
+
+    startScanLoop();
+  }
+
+  // ===== フレーム解析ループ =====
+  // <video> の現在のフレームを <canvas> に描画し、zxing-wasm でデコードを試みる。
+  // setTimeout による自己再帰でループし、前フレームの解析が終わってから
+  // 次フレームを取りにいくことで、処理が重い端末でもフレームが詰まらないようにする。
+  var isScanBusy = false;
+
+  function startScanLoop() {
+    stopScanLoop();
+    scanLoopId = setTimeout(scanFrame, scanIntervalMs);
+  }
+
+  function stopScanLoop() {
+    if (scanLoopId) {
+      clearTimeout(scanLoopId);
+      scanLoopId = null;
+    }
+    isScanBusy = false;
+  }
+
+  function scanFrame() {
+    if (!cameraStarted || isScanBusy) {
+      scanLoopId = setTimeout(scanFrame, scanIntervalMs);
+      return;
     }
 
-    elBtnStopCamera.classList.add("visible");
+    if (elScanVideo.readyState < 2 || !elScanVideo.videoWidth) {
+      // まだ映像フレームが準備できていない
+      scanLoopId = setTimeout(scanFrame, scanIntervalMs);
+      return;
+    }
+
+    isScanBusy = true;
+
+    try {
+      var vw = elScanVideo.videoWidth;
+      var vh = elScanVideo.videoHeight;
+
+      // 中央の正方形領域のみを切り出して解析する。
+      // 全体を解析するより対象領域に絞ったほうが処理が速く、
+      // 走査枠で示しているエリアと実際の解析範囲が一致し分かりやすい。
+      var cropSize = Math.floor(Math.min(vw, vh) * 0.85);
+      var sx = Math.floor((vw - cropSize) / 2);
+      var sy = Math.floor((vh - cropSize) / 2);
+
+      scanCanvas.width = cropSize;
+      scanCanvas.height = cropSize;
+      scanCanvasCtx.drawImage(elScanVideo, sx, sy, cropSize, cropSize, 0, 0, cropSize, cropSize);
+
+      var imageData = scanCanvasCtx.getImageData(0, 0, cropSize, cropSize);
+
+      // zxing-wasm はバージョンによって関数名が異なる
+      // （v1系: readBarcodesFromImageData / v2系以降: readBarcodes）ため、
+      // 両方に対応できるようにする。
+      var readFn = ZXingWASM.readBarcodesFromImageData || ZXingWASM.readBarcodes;
+
+      readFn(imageData, zxingReaderOptions)
+        .then(function (results) {
+          isScanBusy = false;
+          if (!cameraStarted) return;
+
+          if (results && results.length > 0 && results[0].text) {
+            onScanSuccess(results[0].text);
+          }
+          scanLoopId = setTimeout(scanFrame, scanIntervalMs);
+        })
+        .catch(function () {
+          isScanBusy = false;
+          if (!cameraStarted) return;
+          scanLoopId = setTimeout(scanFrame, scanIntervalMs);
+        });
+    } catch (e) {
+      isScanBusy = false;
+      if (cameraStarted) {
+        scanLoopId = setTimeout(scanFrame, scanIntervalMs);
+      }
+    }
   }
 
   elBtnStartCamera.addEventListener("click", function () {
@@ -1138,34 +1157,29 @@
   // ===== カメラ停止 =====
   var elBtnStopCamera = document.getElementById("btn-stop-camera");
 
-  elBtnStopCamera.addEventListener("click", function () {
-    if (!html5QrCode) return;
+  function stopCamera() {
+    stopScanLoop();
+    cameraStarted = false;
 
-    var scanning = false;
-    try {
-      scanning = (typeof html5QrCode.isScanning === "boolean")
-        ? html5QrCode.isScanning
-        : (html5QrCode.getState ? html5QrCode.getState() !== 1 : false);
-    } catch (e) {}
-
-    if (!scanning) return;
-
-    elBtnStopCamera.disabled = true;
-    html5QrCode.stop()
-      .then(function () {
-        cameraStarted = false;
-        elBtnStopCamera.classList.remove("visible");
-        elBtnStopCamera.disabled = false;
-        elBtnStartCamera.disabled = false;
-        elBtnStartCamera.textContent = "カメラを起動する";
-        elCamStartOverlay.classList.remove("hidden");
-        clearOverlayError();
-        showGlobalToast("カメラを停止しました");
-      })
-      .catch(function (err) {
-        elBtnStopCamera.disabled = false;
-        showGlobalToast("カメラの停止に失敗しました");
+    if (mediaStream) {
+      mediaStream.getTracks().forEach(function (track) {
+        track.stop();
       });
+      mediaStream = null;
+    }
+    elScanVideo.srcObject = null;
+  }
+
+  elBtnStopCamera.addEventListener("click", function () {
+    if (!cameraStarted) return;
+
+    stopCamera();
+    elBtnStopCamera.classList.remove("visible");
+    elBtnStartCamera.disabled = false;
+    elBtnStartCamera.textContent = "カメラを起動する";
+    elCamStartOverlay.classList.remove("hidden");
+    clearOverlayError();
+    showGlobalToast("カメラを停止しました");
   });
 
   // ===== 診断機能（ライブラリを介さず直接 getUserMedia を試す） =====
@@ -1178,10 +1192,13 @@
     lines.push("HTTPS判定: " + (window.isSecureContext ? "OK（安全なコンテキスト）" : "NG（保護されていない接続）"));
     lines.push("mediaDevices対応: " + (navigator.mediaDevices ? "あり" : "なし"));
     lines.push("getUserMedia対応: " + (navigator.mediaDevices && navigator.mediaDevices.getUserMedia ? "あり" : "なし"));
-    lines.push("Html5Qrcode読み込み: " + (typeof Html5Qrcode !== "undefined" ? "OK" : "失敗（CDNブロックの可能性）"));
+    lines.push("zxing-wasm読み込み: " + (typeof ZXingWASM !== "undefined" ? "OK" : "失敗（CDNブロックの可能性）"));
+    if (typeof ZXingWASM !== "undefined") {
+      var hasReadFn = !!(ZXingWASM.readBarcodesFromImageData || ZXingWASM.readBarcodes);
+      lines.push("読み取り関数: " + (hasReadFn ? "OK" : "見つかりません（バージョン不一致の可能性）"));
+    }
     lines.push("UA: " + navigator.userAgent);
     lines.push("iOS判定: " + (isIOS ? "はい" : "いいえ"));
-    lines.push("BarcodeDetector対応: " + (typeof window.BarcodeDetector !== "undefined" ? "あり（未使用・zxing-jsで統一）" : "なし"));
     elDiagnoseResult.textContent = lines.join("\n") + "\n\n直接カメラ許可を試しています…";
 
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -1194,8 +1211,9 @@
         elDiagnoseResult.textContent += "\n結果: カメラ権限のダイアログが表示され、許可されました。";
         stream.getTracks().forEach(function (t) { t.stop(); });
 
-        return Html5Qrcode.getCameras().then(function (devices) {
-          if (devices && devices.length > 0) {
+        return navigator.mediaDevices.enumerateDevices().then(function (allDevices) {
+          var devices = allDevices.filter(function (d) { return d.kind === "videoinput"; });
+          if (devices.length > 0) {
             var camLines = devices.map(function (d, i) {
               return "  " + (i + 1) + ". " + (d.label || "(ラベル取得不可)");
             });
@@ -1215,14 +1233,18 @@
 
   // ページ非表示時にカメラを一時停止（バッテリー節約・端末仕様上の安全策）
   document.addEventListener("visibilitychange", function () {
-    if (!html5QrCode || !cameraStarted) return;
+    if (!cameraStarted) return;
     if (document.hidden) {
-      if (html5QrCode.getState && html5QrCode.getState() === Html5QrcodeScannerState.SCANNING) {
-        html5QrCode.pause(true);
+      stopScanLoop();
+      if (mediaStream) {
+        mediaStream.getVideoTracks().forEach(function (t) { t.enabled = false; });
       }
     } else {
-      if (html5QrCode.getState && html5QrCode.getState() === Html5QrcodeScannerState.PAUSED) {
-        html5QrCode.resume();
+      if (mediaStream) {
+        mediaStream.getVideoTracks().forEach(function (t) { t.enabled = true; });
+      }
+      if (cameraStarted) {
+        startScanLoop();
       }
     }
   });
