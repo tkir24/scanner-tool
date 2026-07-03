@@ -228,10 +228,22 @@
     right: 10px;
     z-index: 25;
     display: none;
+    align-items: center;
+    gap: 6px;
+    background: rgba(10, 14, 18, 0.55);
+    padding: 6px 8px;
+    border-radius: 12px;
   }
 
   #cam-switch-bar.visible {
-    display: block;
+    display: flex;
+  }
+
+  #cam-switch-label {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text);
+    white-space: nowrap;
   }
 
   #cam-select {
@@ -242,7 +254,7 @@
     padding: 8px 10px;
     font-size: 12px;
     font-weight: 600;
-    max-width: 46vw;
+    max-width: 38vw;
     -webkit-appearance: none;
     appearance: none;
   }
@@ -572,9 +584,19 @@
     opacity: 0;
     pointer-events: none;
     white-space: nowrap;
+    max-width: 88vw;
+  }
+  #global-toast.wrap {
+    white-space: normal;
+    text-align: center;
+    line-height: 1.5;
+    border-radius: 16px;
   }
   #global-toast.show {
     animation: gtoast 1.8s ease;
+  }
+  #global-toast.show.long {
+    animation-duration: 3.2s;
   }
   @keyframes gtoast {
     0%   { opacity: 0; transform: translateX(-50%) translateY(-6px); }
@@ -615,6 +637,7 @@
     </div>
     <div id="cam-status"></div>
     <div id="cam-switch-bar">
+      <span id="cam-switch-label">レンズ切替</span>
       <select id="cam-select"></select>
     </div>
     <div id="cam-start-overlay">
@@ -793,10 +816,13 @@
     elDupToast.classList.add("show");
   }
 
-  function showGlobalToast(msg) {
+  function showGlobalToast(msg, isLong) {
     elGlobalToast.textContent = msg;
-    elGlobalToast.classList.remove("show");
+    elGlobalToast.classList.remove("show", "wrap", "long");
     void elGlobalToast.offsetWidth;
+    if (isLong) {
+      elGlobalToast.classList.add("wrap", "long");
+    }
     elGlobalToast.classList.add("show");
   }
 
@@ -820,7 +846,7 @@
       return;
     }
 
-    if (serialSet.has(serial)) {
+      if (serialSet.has(serial)) {
       playErrorTone();
       showDupToast();
       return;
@@ -847,7 +873,7 @@
       showGlobalToast("リストは空です");
       return;
     }
-     elModalOverlay.classList.add("show");
+    elModalOverlay.classList.add("show");
   });
 
   elModalCancel.addEventListener("click", function () {
@@ -979,33 +1005,25 @@
   var availableCameras = [];
   var currentCameraId = null;
 
-  // カメラのラベルから「超広角」らしさを判定する。
-  // 超広角レンズは ultra wide / 0.5x などの語を含むことが多く、
-  // 逆に標準レンズは wide のみ、または番号のみのことが多い。
-  function isLikelyUltraWide(label) {
-    if (!label) return false;
-    return /ultra[\s-]?wide|超広角|0\.5x|UW/i.test(label);
-  }
-
+  // 注意: 一部のAndroid端末（Galaxy S23 FE等）では、カメラのラベルが
+  // "camera 0, facing back" のように匿名化され、実際のレンズ種別
+  // （標準/超広角/望遠）を示す情報が一切含まれない。この場合、ラベルから
+  // 超広角かどうかを判定することは原理的に不可能なため、推測は行わない。
+  // 代わりに、背面カメラが複数ある場合は必ず切り替えセレクタを表示し、
+  // ユーザー自身が映像を見ながら標準レンズを選べるようにする。
   function isLikelyBackCamera(label) {
     if (!label) return false;
     return /back|rear|environment|背面/i.test(label);
   }
 
-  // 起動に使う背面カメラを推定する。
-  // 超広角ラベルを避け、背面カメラの中で最もそれらしいものを選ぶ。
-  function pickBestBackCamera(devices) {
+  // 起動に使う背面カメラの初期候補を決める。
+  // 推測に頼らず、背面カメラの先頭を暫定候補とする。
+  // 誤っていた場合はユーザーが切り替えセレクタで訂正する想定。
+  function pickInitialBackCamera(devices) {
     var backCams = devices.filter(function (d) {
       return isLikelyBackCamera(d.label);
     });
     var candidates = backCams.length > 0 ? backCams : devices;
-
-    var nonUltraWide = candidates.filter(function (d) {
-      return !isLikelyUltraWide(d.label);
-    });
-    if (nonUltraWide.length > 0) {
-      return nonUltraWide[0];
-    }
     return candidates[0];
   }
 
@@ -1181,7 +1199,7 @@
         availableCameras = devices;
         populateCameraSelect(devices);
 
-        var target = pickBestBackCamera(devices);
+        var target = pickInitialBackCamera(devices);
         currentCameraId = target.id;
         syncCameraSelectValue();
 
@@ -1202,19 +1220,22 @@
       });
   }
 
-  // カメラ切り替えセレクタに一覧を反映する
+  // カメラ切り替えセレクタに一覧を反映する（背面カメラのみを対象とする）
   function populateCameraSelect(devices) {
+    var backCams = devices.filter(function (d) {
+      return isLikelyBackCamera(d.label);
+    });
+    var listForSelect = backCams.length > 0 ? backCams : devices;
+
     elCamSelect.innerHTML = "";
-    devices.forEach(function (d, idx) {
+    listForSelect.forEach(function (d, idx) {
       var opt = document.createElement("option");
       opt.value = d.id;
-      var label = d.label || ("カメラ " + (idx + 1));
-      // 長いラベルは末尾を省略
-      if (label.length > 24) label = label.slice(0, 24) + "…";
-      opt.textContent = label;
+      opt.textContent = "背面カメラ " + (idx + 1);
       elCamSelect.appendChild(opt);
     });
-    if (devices.length > 1) {
+
+    if (listForSelect.length > 1) {
       elCamSwitchBar.classList.add("visible");
     }
   }
@@ -1230,11 +1251,16 @@
     var newId = elCamSelect.value;
     if (!newId || newId === currentCameraId || !html5QrCode) return;
 
+    var selectedLabel = elCamSelect.options[elCamSelect.selectedIndex]
+      ? elCamSelect.options[elCamSelect.selectedIndex].textContent
+      : "選択したレンズ";
+
     var switchTo = function () {
       runStartSimple({ deviceId: { exact: newId } })
         .then(function () {
           currentCameraId = newId;
           elCamStatus.textContent = "";
+          showGlobalToast(selectedLabel + " に切り替えました");
         })
         .catch(function (err) {
           showGlobalToast("カメラの切り替えに失敗しました");
@@ -1271,6 +1297,10 @@
     elCamStatus.textContent = "";
     // カメラ起動と同じユーザー操作の流れでAudioContextも有効化しておく
     ensureAudioContext();
+
+    if (elCamSwitchBar.classList.contains("visible")) {
+      showGlobalToast("映像が広すぎる場合は右上「レンズ切替」で標準レンズを選んでください", true);
+    }
   }
 
   elBtnStartCamera.addEventListener("click", function () {
