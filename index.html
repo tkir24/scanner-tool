@@ -158,11 +158,6 @@
     display: block;
   }
 
-  #btn-stop-camera:active {
-    background: var(--danger-dim);
-    border-color: var(--danger-dim);
-  }
-
   #cam-start-overlay {
     position: absolute;
     inset: 0;
@@ -192,10 +187,6 @@
     padding: 14px 28px;
   }
 
-  #btn-start-camera:active {
-    background: var(--accent);
-  }
-
   #cam-error-detail {
     font-size: 12px;
     line-height: 1.7;
@@ -211,7 +202,7 @@
 
   .dup-toast {
     position: absolute;
-    top: 12px;
+    bottom: 12px;
     left: 50%;
     transform: translateX(-50%);
     background: rgba(255, 180, 84, 0.95);
@@ -228,10 +219,10 @@
     animation: toastpop 1.4s ease;
   }
   @keyframes toastpop {
-    0%   { opacity: 0; transform: translateX(-50%) translateY(-6px); }
+    0%   { opacity: 0; transform: translateX(-50%) translateY(6px); }
     15%  { opacity: 1; transform: translateX(-50%) translateY(0); }
     80%  { opacity: 1; }
-    100% { opacity: 0; transform: translateX(-50%) translateY(-4px); }
+    100% { opacity: 0; transform: translateX(-50%) translateY(4px); }
   }
 
   /* ===== リストエリア ===== */
@@ -327,18 +318,12 @@
     border-radius: 8px;
     background: transparent;
     border: 1px solid var(--line);
-    color: var(--accent);
+    color: var(--text-dim);
     font-size: 12px;
     font-weight: 700;
     display: flex;
     align-items: center;
     justify-content: center;
-  }
-
-  .item-row .copy-one-btn:active {
-    background: var(--accent-dim);
-    color: #fff;
-    border-color: var(--accent-dim);
   }
 
   .item-row .del-btn {
@@ -354,12 +339,6 @@
     display: flex;
     align-items: center;
     justify-content: center;
-  }
-
-  .item-row .del-btn:active {
-    background: var(--danger-dim);
-    color: #fff;
-    border-color: var(--danger-dim);
   }
 
   /* ===== 下部固定ボタン ===== */
@@ -391,19 +370,9 @@
   #btn-clear {
     background: var(--danger-dim);
   }
-  #btn-clear:active {
-    background: #b83431;
-  }
 
   #btn-copy {
     background: var(--accent-dim);
-  }
-  #btn-copy:active {
-    background: #187e58;
-  }
-
-  #btn-copy.copied {
-    background: var(--accent);
   }
 
   /* ===== モーダル（確認） ===== */
@@ -463,7 +432,7 @@
   /* トースト（コピー完了など） */
   #global-toast {
     position: fixed;
-    top: calc(70px + var(--safe-top));
+    top: calc(34vh + var(--safe-top) + 60px);
     left: 50%;
     transform: translateX(-50%);
     background: rgba(30, 38, 48, 0.96);
@@ -544,11 +513,11 @@
 
   <!-- 固定アクションボタン -->
   <div id="action-bar">
-    <button id="btn-clear">
-      <span>一括削除</span>
-    </button>
     <button id="btn-copy">
       <span id="btn-copy-label">一括コピー</span>
+    </button>
+    <button id="btn-clear">
+      <span>一括削除</span>
     </button>
   </div>
 
@@ -702,6 +671,7 @@
     var idx = serialList.indexOf(serial);
     if (idx !== -1) serialList.splice(idx, 1);
     renderList();
+    showGlobalToast(serial + " を削除しました");
   }
 
   // ===== 一時演出 =====
@@ -807,12 +777,10 @@
 
     copyToClipboard(text).then(function (ok) {
       if (ok) {
-        elBtnCopy.classList.add("copied");
         var original = elBtnCopyLabel.textContent;
         elBtnCopyLabel.textContent = "コピーしました";
         showGlobalToast(serialList.length + "件をコピーしました");
         setTimeout(function () {
-          elBtnCopy.classList.remove("copied");
           elBtnCopyLabel.textContent = original;
         }, 1500);
       } else {
