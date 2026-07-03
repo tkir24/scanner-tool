@@ -107,7 +107,9 @@
     position: relative;
     width: 100%;
     aspect-ratio: 1 / 1;
-    max-height: 42vh;
+    /* リスト（読み取り履歴）エリアがカメラと同等以上の面積を確保できるよう、
+       カメラエリアの高さ上限を控えめにする。 */
+    max-height: 34vh;
     background: #000;
     overflow: hidden;
   }
@@ -250,38 +252,6 @@
 
   #cam-error-detail.show-error {
     color: var(--warn);
-  }
-
-  .secondary-btn {
-    border: 1px solid var(--line) !important;
-    background: transparent !important;
-    color: var(--text-dim) !important;
-    font-size: 12px !important;
-    font-weight: 600 !important;
-    padding: 8px 16px !important;
-    border-radius: 20px !important;
-    margin-top: 4px;
-  }
-
-  .secondary-btn:active {
-    background: var(--panel-2) !important;
-  }
-
-  #diagnose-result {
-    font-size: 11px;
-    line-height: 1.8;
-    color: var(--text-dim);
-    max-width: 320px;
-    text-align: left;
-    background: var(--panel-2);
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    padding: 10px 12px;
-    white-space: pre-wrap;
-  }
-
-  #diagnose-result:empty {
-    display: none;
   }
 
   .dup-toast {
@@ -588,8 +558,6 @@
     <div id="cam-start-overlay">
       <button id="btn-start-camera">カメラを起動する</button>
       <div id="cam-error-detail"></div>
-      <button id="btn-diagnose" class="secondary-btn">起動しない場合はこちら（診断）</button>
-      <div id="diagnose-result"></div>
     </div>
   </div>
 
@@ -1180,55 +1148,6 @@
     elCamStartOverlay.classList.remove("hidden");
     clearOverlayError();
     showGlobalToast("カメラを停止しました");
-  });
-
-  // ===== 診断機能（ライブラリを介さず直接 getUserMedia を試す） =====
-  var elBtnDiagnose = document.getElementById("btn-diagnose");
-  var elDiagnoseResult = document.getElementById("diagnose-result");
-
-  elBtnDiagnose.addEventListener("click", function () {
-    var lines = [];
-    lines.push("URL: " + location.href);
-    lines.push("HTTPS判定: " + (window.isSecureContext ? "OK（安全なコンテキスト）" : "NG（保護されていない接続）"));
-    lines.push("mediaDevices対応: " + (navigator.mediaDevices ? "あり" : "なし"));
-    lines.push("getUserMedia対応: " + (navigator.mediaDevices && navigator.mediaDevices.getUserMedia ? "あり" : "なし"));
-    lines.push("zxing-wasm読み込み: " + (typeof ZXingWASM !== "undefined" ? "OK" : "失敗（CDNブロックの可能性）"));
-    if (typeof ZXingWASM !== "undefined") {
-      var hasReadFn = !!(ZXingWASM.readBarcodesFromImageData || ZXingWASM.readBarcodes);
-      lines.push("読み取り関数: " + (hasReadFn ? "OK" : "見つかりません（バージョン不一致の可能性）"));
-    }
-    lines.push("UA: " + navigator.userAgent);
-    lines.push("iOS判定: " + (isIOS ? "はい" : "いいえ"));
-    elDiagnoseResult.textContent = lines.join("\n") + "\n\n直接カメラ許可を試しています…";
-
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      elDiagnoseResult.textContent += "\nこのブラウザではカメラAPIが使えません。";
-      return;
-    }
-
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } } })
-      .then(function (stream) {
-        elDiagnoseResult.textContent += "\n結果: カメラ権限のダイアログが表示され、許可されました。";
-        stream.getTracks().forEach(function (t) { t.stop(); });
-
-        return navigator.mediaDevices.enumerateDevices().then(function (allDevices) {
-          var devices = allDevices.filter(function (d) { return d.kind === "videoinput"; });
-          if (devices.length > 0) {
-            var camLines = devices.map(function (d, i) {
-              return "  " + (i + 1) + ". " + (d.label || "(ラベル取得不可)");
-            });
-            elDiagnoseResult.textContent += "\n\n検出されたカメラ一覧:\n" + camLines.join("\n");
-          } else {
-            elDiagnoseResult.textContent += "\n\nカメラ一覧を取得できませんでした。";
-          }
-        }).catch(function () {
-          elDiagnoseResult.textContent += "\n\nカメラ一覧の取得に失敗しました。";
-        });
-      })
-      .catch(function (err) {
-        var name = (err && err.name) || "UnknownError";
-        elDiagnoseResult.textContent += "\n結果: 直接アクセスも失敗しました。（" + name + "）\n" + describeStartError(err);
-      });
   });
 
   // ページ非表示時にカメラを一時停止（バッテリー節約・端末仕様上の安全策）
