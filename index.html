@@ -808,7 +808,10 @@
 
     if (!serial) {
       playErrorTone();
-      showGlobalToast("数字を認識できませんでした");
+      // 読み取り自体は成功しているが、末尾に数字が見つからなかったケース。
+      // 原因切り分けのため、実際に読み取った内容を表示する。
+      var preview = decodedText.length > 40 ? decodedText.slice(0, 40) + "…" : decodedText;
+      showGlobalToast("数字を認識できませんでした: " + preview, true);
       return;
     }
 
@@ -932,35 +935,23 @@
 
   var qrConfig = {
     fps: isIOS ? 8 : 12,
-    qrbox: function (viewfinderWidth, viewfinderHeight) {
-      // QRコード（正方形）とバーコード（横長）の両方を安定して検出できるよう、
-      // 走査枠は正方形に近い形にする。横長の枠だとQRコードが収まりきらず
-      // 認識率が落ちるため。
-      // viewfinderWidth/Height が起動直後で 0 の場合に備え、最小サイズを保証する。
-      var minSide = Math.min(viewfinderWidth || 0, viewfinderHeight || 0);
-      // iOSはやや大きめの走査枠のほうが検出されやすい傾向があるため比率を上げる
-      var ratio = isIOS ? 0.85 : 0.78;
-      var size = minSide > 0 ? Math.floor(minSide * ratio) : 260;
-      size = Math.max(size, 200);
-      return { width: size, height: size };
-    },
+    // qrbox は固定の数値で指定する。
+    // 関数形式（viewfinderWidth/Height を受け取って計算する方式）は、
+    // 環境によって渡される値が 0 や不正確になることがあり、その場合
+    // 走査枠が壊れた状態になり QR コードが全く検出されなくなることがある。
+    // 固定値のほうが確実に動作するため、こちらを採用する。
+    qrbox: 260,
     disableFlip: false,
     // 注意: useBarCodeDetectorIfSupported を true にすると、環境によっては
     // ネイティブ BarcodeDetector 側のフォーマット変換の不整合により
     // バーコードは検出できてもQRコードだけ全く反応しなくなる既知の不具合がある。
     // そのため確実に動作する zxing-js（JS実装）に統一し、無効化する。
-    useBarCodeDetectorIfSupported: false,
-    formatsToSupport: (window.Html5QrcodeSupportedFormats ? [
-      Html5QrcodeSupportedFormats.QR_CODE,
-      Html5QrcodeSupportedFormats.CODE_128,
-      Html5QrcodeSupportedFormats.CODE_39,
-      Html5QrcodeSupportedFormats.EAN_13,
-      Html5QrcodeSupportedFormats.EAN_8,
-      Html5QrcodeSupportedFormats.UPC_A,
-      Html5QrcodeSupportedFormats.UPC_E,
-      Html5QrcodeSupportedFormats.ITF,
-      Html5QrcodeSupportedFormats.CODABAR
-    ] : undefined)
+    useBarCodeDetectorIfSupported: false
+    // formatsToSupport は意図的に指定しない。
+    // 複数フォーマットを明示的に列挙すると、環境によっては内部のデコーダー
+    // 登録順の影響でQRコードが検出対象から外れてしまう既知の不具合報告がある。
+    // 指定しない場合はライブラリ側のデフォルト（全フォーマット対応）が使われ、
+    // QR・バーコードとも安定して検出される。
   };
 
 
